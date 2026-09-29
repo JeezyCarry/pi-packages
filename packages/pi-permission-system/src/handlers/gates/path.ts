@@ -10,6 +10,7 @@ import {
   accessFactsFromPath,
   buildPathGateLogContext,
   buildPathGatePromptDetails,
+  reasonFromInput,
 } from "./helpers";
 import type { ToolCallContext } from "./types";
 
@@ -64,6 +65,7 @@ export function describePathGate(
   const payload = buildPathAskPayload({
     toolName: tcc.toolName,
     pathValue: filePath,
+    reason: reasonFromInput(tcc.input),
     agentName: tcc.agentName,
     matchedPattern: check.matchedPattern,
     surface,

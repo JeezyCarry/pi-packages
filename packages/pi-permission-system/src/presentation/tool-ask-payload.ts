@@ -44,7 +44,7 @@ export function buildToolAskPayload(facts: ToolAskFacts): PromptPayload {
       executedUnit: check.executedUnit ?? null,
     },
     evidence: bash
-      ? fullCommandEvidence(facts)
+      ? [...reasonEvidence(facts), ...fullCommandEvidence(facts)]
       : inputPreviewEvidence(facts, mcp),
     annotations: [],
   };
@@ -81,6 +81,14 @@ function fullCommandEvidence(facts: ToolAskFacts): PromptEvidence[] {
     return [];
   }
   return [{ label: "full command", text: fullCommand, detail: null }];
+}
+
+/** The agent's stated intent, surfaced verbatim when the tool input carries it. */
+function reasonEvidence(facts: ToolAskFacts): PromptEvidence[] {
+  const reason = getNonEmptyString(toRecord(facts.input).reason);
+  return reason === null
+    ? []
+    : [{ label: "reason", text: reason, detail: null }];
 }
 
 /**

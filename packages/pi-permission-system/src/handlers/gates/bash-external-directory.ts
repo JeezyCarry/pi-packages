@@ -5,7 +5,7 @@ import { buildBashExternalDirectoryAskPayload } from "#src/presentation/path-ask
 import { SessionApproval } from "#src/session/session-approval";
 import type { GateResult } from "./descriptor";
 import { selectUncoveredExternalPaths } from "./external-directory-policy";
-import { accessFactsFromPath } from "./helpers";
+import { accessFactsFromPath, reasonFromInput } from "./helpers";
 import type { ToolCallContext } from "./types";
 
 /**
@@ -96,6 +96,7 @@ export function describeBashExternalDirectoryGate(
   const surface = worstEntry.surface;
   const payload = buildBashExternalDirectoryAskPayload({
     command,
+    reason: reasonFromInput(tcc.input),
     externalPaths: disclosures,
     cwd: tcc.cwd,
     agentName: tcc.agentName,

@@ -11,6 +11,7 @@ import {
   accessFactsFromPath,
   buildPathGateLogContext,
   buildPathGatePromptDetails,
+  reasonFromInput,
 } from "./helpers";
 import type { ToolCallContext } from "./types";
 
@@ -90,6 +91,7 @@ export function describeExternalDirectoryGate(
   const payload = buildExternalDirectoryAskPayload({
     toolName: tcc.toolName,
     pathValue: externalDirectoryPath,
+    reason: reasonFromInput(tcc.input),
     resolvedPath: resolvedAlias,
     cwd: tcc.cwd,
     agentName: tcc.agentName,

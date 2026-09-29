@@ -22,6 +22,8 @@ interface PathAskFacts {
    * `kind`, which stays coarse so renderer dispatch is untouched.
    */
   surface: string;
+  /** The agent's stated intent, shown verbatim when the tool input carries one. */
+  reason?: string;
 }
 
 /** A tool ask gated by an explicit `path`-family rule. */
@@ -59,9 +61,11 @@ interface BashExternalDirectoryAskFacts {
   /**
    * The surface that decided — a directional member when the deciding path's
    * effect was proven, the bare family otherwise. Distinct from the payload
-   * `kind`, which stays coarse so renderer dispatch is untouched.
+   * `kind`, which stays coarse so renderer dispatch remains untouched.
    */
   surface: string;
+  /** The agent's stated intent, shown verbatim when the tool input carries one. */
+  reason?: string;
 }
 
 /** A bash ask whose command references paths outside the working directory. */
@@ -81,6 +85,7 @@ export function buildBashExternalDirectoryAskPayload(
       executedUnit: null,
     },
     evidence: [
+      ...reasonEvidence(facts.reason),
       workingDirectoryEvidence(facts.cwd),
       ...facts.externalPaths.map(externalPathEvidence),
     ],
@@ -111,10 +116,17 @@ function pathPayload(
       commandContext: null,
       executedUnit: null,
     },
-    evidence,
+    evidence: [...reasonEvidence(facts.reason), ...evidence],
     annotations: [],
   };
 }
+/** The agent's stated intent, surfaced verbatim when the gate supplies it. */
+function reasonEvidence(reason?: string): PromptEvidence[] {
+  return reason === undefined
+    ? []
+    : [{ label: "reason", text: reason, detail: null }];
+}
+
 
 /**
  * The canonical location, as its own entry rather than folded into the value:
