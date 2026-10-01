@@ -130,6 +130,121 @@ describe("BashProgram", () => {
       });
     });
 
+    describe("a program that reassigns HOME or PWD", () => {
+      /** Each external access's display path and attributed effect. */
+      async function externalsOf(command: string) {
+        const program = await BashProgram.parse(command, normalizer);
+        return program.externalAccesses().map(({ path, effect }) => ({
+          path: path.value(),
+          effect,
+        }));
+      }
+
+      it.each([
+        ['HOME=/etc; cat "$HOME/shadow"', "an assignment"],
+        ['export HOME=/etc; cat "$HOME/shadow"', "a declaration"],
+        ['unset HOME; cat "$HOME/shadow"', "unset, which empties it"],
+        ['cat "$HOME/shadow"; HOME=/etc', "an assignment after the reference"],
+        ['PWD=/; cat "$PWD/../shadow"', "an assignment to PWD"],
+        [
+          "HOME=/etc; cat ~/shadow",
+          "a tilde, which bash 3.2 expands from HOME",
+        ],
+        [
+          'read HOME; cat "$HOME/shadow"',
+          "read, which binds the name it is given",
+        ],
+        [
+          'source f; cat "$HOME/shadow"',
+          "source, which runs code the walk never sees",
+        ],
+      ])(
+        "no longer projects %s under its startup value (%s)",
+        async (command) => {
+          expect(await externalsOf(command)).toEqual([]);
+        },
+      );
+
+      it("counts an assignment only a salvaged region holds", async () => {
+        // The grammar cannot parse a heredoc followed by `; …` on its line, so
+        // the assignment is recovered only by the salvage's re-parse.
+        expect(
+          await externalsOf(
+            'cat <<EOF ; HOME=/etc\nx\nEOF\ncat "$HOME/shadow"',
+          ),
+        ).toEqual([]);
+      });
+
+      it("projects a for loop's word list but not the loop variable's reference", async () => {
+        expect(
+          await externalsOf('for HOME in /etc; do cat "$HOME/shadow"; done'),
+        ).toEqual([
+          {
+            path: "/etc",
+            effect: { effect: "unproven", source: "unproven" },
+          },
+        ]);
+      });
+
+      it("withdraws find's read claim for a reassigned $HOME that may spell an option", async () => {
+        expect(await externalsOf('HOME=-delete; find /etc "$HOME"')).toEqual(
+          await externalsOf('find /etc "$X"'),
+        );
+      });
+
+      it("withdraws find's read claim for a tilde once HOME is reassigned", async () => {
+        expect(await externalsOf("HOME=-delete; find /etc ~")).toEqual(
+          await externalsOf('find /etc "$X"'),
+        );
+      });
+
+      describe("an inherited HOME that begins with a dash", () => {
+        beforeEach(() => {
+          vi.stubEnv("HOME", "-delete");
+        });
+        afterEach(() => {
+          vi.unstubAllEnvs();
+        });
+
+        it("withdraws find's read claim for a tilde", async () => {
+          expect(
+            (await externalsOf("find /etc ~")).map(({ effect }) => effect),
+          ).toEqual([{ effect: "unproven", source: "retracted" }]);
+        });
+      });
+
+      describe("a program that leaves both alone", () => {
+        it.each([
+          ['cat "$HOME/shadow"', join(homedir(), "shadow")],
+          ['env -i HOME="$HOME" cat "$HOME/shadow"', join(homedir(), "shadow")],
+          ['cat "$PWD/../shadow"', "/projects/shadow"],
+          ["grep HOME ~/.bashrc", join(homedir(), ".bashrc")],
+        ])("still projects %s", async (command, expected) => {
+          expect((await externalsOf(command)).map(({ path }) => path)).toEqual([
+            expected,
+          ]);
+        });
+
+        it("still proves sed's read of a tilde path", async () => {
+          expect(await externalsOf("sed -n p ~/x")).toEqual([
+            {
+              path: join(homedir(), "x"),
+              effect: { effect: "read", source: "core" },
+            },
+          ]);
+        });
+
+        it("still proves find's read of $HOME", async () => {
+          expect(await externalsOf('find "$HOME/other"')).toEqual([
+            {
+              path: join(homedir(), "other"),
+              effect: { effect: "read", source: "core" },
+            },
+          ]);
+        });
+      });
+    });
+
     describe("operands a statement names directly (#839)", () => {
       it("flags a for loop's absolute word-list operand", async () => {
         const program = await BashProgram.parse(

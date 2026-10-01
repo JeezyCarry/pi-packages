@@ -27,6 +27,9 @@ Take the input from something that already exists:
 - Real config on disk — `.pi/settings.json`, a package's own `config.json` — rather than an object literal describing what one would contain.
 - The upstream function itself, called from `../pi` or the pinned dependency, rather than a hand-written imitation of its output.
 
+A probe that selects its input through the code under test's own filter inherits that filter's blind spot: #924's spike read argument words through `ARG_NODE_TYPES` and so never saw the bare `$opt` a sound design had to catch.
+Enumerate the input independently of the code the probe is meant to judge.
+
 When no real artifact is reachable, say so: label the evidence synthetic and unconfirmed, and carry that label into the plan's Design Overview.
 A named limit is a finding; an unnamed one becomes a premise.
 

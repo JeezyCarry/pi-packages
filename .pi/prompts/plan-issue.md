@@ -69,7 +69,7 @@ Before investigating the issue, load skills relevant to the change:
    When the design rests on the dependency's internal behavior rather than its API, also read that mechanism in the tracking checkout and confirm it is unchanged from the pinned version.
    The tracker answers the maintainer's posture; the checkout answers whether the code already moved.
 5. Open the source files most relevant to the change and skim them before writing.
-6. When a bug report does not reproduce locally, dispatch `Explore` (`model: "sonnet-5"`) for the root-cause hunt instead of running it inline — a hunt that ends in "not determinable from the code" still costs this session's context, and the plan is written right after.
+6. When a bug report does not reproduce locally, dispatch `Explore` (`model: "sonnet-5-5"`) for the root-cause hunt instead of running it inline — a hunt that ends in "not determinable from the code" still costs this session's context, and the plan is written right after.
    Verifying a diagnosis the report already supplies (named files, a numbered source trace) is not that hunt — keep it inline, since what it establishes is the design's input.
    A hunt that needs live execution — a CLI repro, an authenticated API spike, a variant table you iterate on — also stays inline; `Explore` is read-only and cannot run it.
    For any bug report, trace what **triggers** the defect, not only what the defect does: name and cite the code path that changes the input (a cache key, an event, a config re-read).
@@ -223,6 +223,7 @@ Then an H1 title (e.g., `# <short descriptive title>`) — required by markdownl
   For a prompt or skill change, the shell commands the new text prescribes are its testable surface: dry-run each at planning time and record the expected output, so `/build-plan` can re-run them as verification.
   When the plan introduces a parser or matcher, its testable surface is the input domain rather than the inputs you can picture.
   Run the candidate over every real sample available, and include this repo's own authoring conventions among the shapes it must survive, such as `markdown-conventions`' four-backtick fence.
+  When a prototype exists, run each case and killing mutation the TDD Order names through it, and record the outcome it produced rather than the one you expect.
   When the change's goal is a token's **absence** from output, apply that predicate to every literal the plan specifies, and assert it across the whole variant set rather than one example.
 - **Invariants at risk** — when the change touches a surface a prior phase step already refactored, list that step's documented invariants (the architecture roadmap's `Outcome:`/`Landed:` bullets) and name the test that pins each — add a test if the invariant lives only in prose.
   Open each test you name — a file that mocks the layer under test pins nothing about it.

@@ -20,7 +20,6 @@ describe("createResolvedSpawnConfig", () => {
         inheritContext: false,
         runInBackground: false,
         agentInvocation: {
-          modelName: undefined,
           thinking: undefined,
           maxTurns: undefined,
           inheritContext: false,
@@ -28,7 +27,6 @@ describe("createResolvedSpawnConfig", () => {
         },
       },
       presentation: {
-        modelName: undefined,
         agentTags: [],
         detailBase: {
           displayName: "Agent",
@@ -79,7 +77,6 @@ describe("createResolvedSpawnConfig", () => {
       description: "scan repo",
       model: "haiku",
     });
-    expect(config.presentation.modelName).toBe("haiku");
     expect(config.presentation.detailBase).toEqual({
       displayName: "Explore",
       description: "scan repo",

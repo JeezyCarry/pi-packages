@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.0.1](https://github.com/gotgenes/pi-packages/compare/pi-github-tools-v5.0.0...pi-github-tools-v5.0.1) (2026-09-29)
+
+
+### Bug Fixes
+
+* **pi-github-tools:** declare typebox as a host-provided peer dependency ([d495027](https://github.com/gotgenes/pi-packages/commit/d4950273f98480997a64417ba93acff9dcdeee65)), closes [#994](https://github.com/gotgenes/pi-packages/issues/994)
+
 ## [5.0.0](https://github.com/gotgenes/pi-packages/compare/pi-github-tools-v4.4.0...pi-github-tools-v5.0.0) (2026-09-01)
 
 

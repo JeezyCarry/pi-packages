@@ -4,7 +4,7 @@ import { dts } from "rollup-plugin-dts";
 // We ship .ts source, so we want only .d.ts — no JS emit.
 // Internal #src/* modules are inlined; peer-dependency types are kept external.
 
-const external = [/^@earendil-works\//, "@sinclair/typebox"];
+const external = [/^@earendil-works\//, "typebox"];
 const plugin = dts({ tsconfig: "./tsconfig.json" });
 
 export default [

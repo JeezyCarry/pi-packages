@@ -22,6 +22,27 @@ describe("parseBashCommandsSync", () => {
       await warmBashParser();
     });
 
+    it("withholds a wrapped reader's exemption once its argument's HOME is reassigned", () => {
+      expect(parseBashCommandsSync('xargs find "$HOME"')).toEqual([
+        {
+          text: 'xargs find "$HOME"',
+          wrapperKind: "indirection",
+          executedUnit: 'find "$HOME"',
+          floorExemption: "core-reader",
+        },
+      ]);
+      expect(parseBashCommandsSync('HOME=-delete; xargs find "$HOME"')).toEqual(
+        [
+          { text: "HOME=-delete" },
+          {
+            text: 'xargs find "$HOME"',
+            wrapperKind: "indirection",
+            executedUnit: 'find "$HOME"',
+          },
+        ],
+      );
+    });
+
     it("returns a single unit for a lone command", () => {
       expect(parseBashCommandsSync("echo hi")).toEqual([{ text: "echo hi" }]);
     });

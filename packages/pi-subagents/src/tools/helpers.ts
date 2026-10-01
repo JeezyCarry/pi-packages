@@ -1,6 +1,6 @@
 import type { AgentConfigLookup } from "#src/config/agent-types";
 import { getLifetimeTotal, type LifetimeUsage } from "#src/lifecycle/usage";
-import { type AgentDetails, formatTokens } from "#src/ui/display";
+import { type AgentDetails, formatTokens, type ModelIdentity, modelLabel } from "#src/ui/display";
 
 /** Build AgentDetails from a base + record-specific fields. */
 export function buildDetails(
@@ -16,11 +16,14 @@ export function buildDetails(
     /** Live-activity counters — exposed as getters on Subagent (Phase 18 Step 2). */
     turnCount?: number;
     maxTurns?: number;
+    /** The model the agent runs; unknown for an inherited model until its session exists. */
+    model?: ModelIdentity;
   },
   overrides?: Partial<AgentDetails>,
 ): AgentDetails {
   return {
     ...base,
+    modelName: modelLabel(record.model) ?? base.modelName,
     toolUses: record.toolUses,
     tokens: formatLifetimeTokens(record),
     turnCount: record.turnCount,

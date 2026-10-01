@@ -41,8 +41,8 @@ describe("renderStats", () => {
 	});
 
 	it("includes model name", () => {
-		const details = makeDetails({ modelName: "haiku" });
-		expect(renderStats(details, theme)).toContain("[dim:haiku]");
+		const details = makeDetails({ modelName: "anthropic/claude-haiku-4-5" });
+		expect(renderStats(details, theme)).toContain("[dim:anthropic/claude-haiku-4-5]");
 	});
 
 	it("includes tags", () => {
@@ -93,8 +93,8 @@ describe("renderStats", () => {
 	});
 
 	it("joins multiple parts with dim separator", () => {
-		const details = makeDetails({ modelName: "haiku", toolUses: 2 });
-		expect(renderStats(details, theme)).toBe("[dim:haiku] [dim:·] [dim:2 tool uses]");
+		const details = makeDetails({ modelName: "anthropic/claude-haiku-4-5", toolUses: 2 });
+		expect(renderStats(details, theme)).toBe("[dim:anthropic/claude-haiku-4-5] [dim:·] [dim:2 tool uses]");
 	});
 });
 
@@ -112,8 +112,8 @@ describe("renderRunning", () => {
 	});
 
 	it("includes stats in output", () => {
-		const details = makeDetails({ status: "running", modelName: "haiku" });
-		expect(renderRunning(details, theme)).toContain("[dim:haiku]");
+		const details = makeDetails({ status: "running", modelName: "anthropic/claude-haiku-4-5" });
+		expect(renderRunning(details, theme)).toContain("[dim:anthropic/claude-haiku-4-5]");
 	});
 
 	it("uses activity text when provided", () => {
@@ -213,8 +213,8 @@ describe("renderStopped", () => {
 	});
 
 	it("includes stats in output", () => {
-		const details = makeDetails({ status: "stopped", modelName: "haiku" });
-		expect(renderStopped(details, theme)).toContain("[dim:haiku]");
+		const details = makeDetails({ status: "stopped", modelName: "anthropic/claude-haiku-4-5" });
+		expect(renderStopped(details, theme)).toContain("[dim:anthropic/claude-haiku-4-5]");
 	});
 
 	it("shows Stopped message on second line", () => {

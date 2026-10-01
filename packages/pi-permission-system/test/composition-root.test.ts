@@ -22,7 +22,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 
 import {
   createEventBus,
@@ -154,6 +154,7 @@ function makeBaseCtx(
     select?: CtxSelect;
     notify?: CtxNotify;
     isProjectTrusted?: boolean;
+    sessionName?: string;
   } = {},
 ): unknown {
   const trusted = options.isProjectTrusted ?? true;
@@ -165,6 +166,7 @@ function makeBaseCtx(
       getEntries: (): unknown[] => [],
       getSessionId: (): string => sessionId,
       getSessionDir: (): string => cwd,
+      getSessionName: (): string | undefined => options.sessionName,
     },
     ui: {
       notify: options.notify ?? ((): void => {}),
@@ -2219,7 +2221,7 @@ describe("directional external-directory relief (#806)", () => {
   });
 });
 
-describe("configured permission-dialog hotkeys reach the inline dialog", () => {
+describe("configured prompt preferences reach the inline dialog", () => {
   /**
    * A TUI ctx whose `ui.custom` captures the dialog component.
    *
@@ -2227,17 +2229,23 @@ describe("configured permission-dialog hotkeys reach the inline dialog", () => {
    * which has no hotkeys at all — only `mode: "tui"` reaches the inline
    * keybind dialog, which is where a configured binding is observable.
    */
-  function makeTuiCtx(cwd: string): {
+  function makeTuiCtx(
+    cwd: string,
+    sessionName?: string,
+  ): {
     ctx: unknown;
     render: () => string[];
     press: (data: string) => void;
     notified: string[];
+    terminalWrites: string[];
   } {
+    const terminalWrites: string[] = [];
     let component:
       | { render(width: number): string[]; handleInput(data: string): void }
       | undefined;
     const notified: string[] = [];
     const base = makeBaseCtx(cwd, "tui-session", {
+      sessionName,
       notify: (message: string): void => {
         notified.push(message);
       },
@@ -2253,7 +2261,10 @@ describe("configured permission-dialog hotkeys reach the inline dialog", () => {
         setToolsExpanded: (): void => {},
         custom: (
           factory: (
-            tui: { requestRender: () => void },
+            tui: {
+              requestRender: () => void;
+              terminal: { write(data: string): void };
+            },
             theme: { fg(color: string, text: string): string },
             keybindings: { matches(data: string, action: string): boolean },
             done: (decision: unknown) => void,
@@ -2261,7 +2272,14 @@ describe("configured permission-dialog hotkeys reach the inline dialog", () => {
         ): Promise<unknown> =>
           new Promise((resolve) => {
             component = factory(
-              { requestRender: (): void => {} },
+              {
+                requestRender: (): void => {},
+                terminal: {
+                  write: (data): void => {
+                    terminalWrites.push(data);
+                  },
+                },
+              },
               { fg: (_color, text) => text },
               { matches: () => false },
               resolve,
@@ -2276,6 +2294,7 @@ describe("configured permission-dialog hotkeys reach the inline dialog", () => {
         component?.handleInput(data);
       },
       notified,
+      terminalWrites,
     };
   }
 
@@ -2285,6 +2304,88 @@ describe("configured permission-dialog hotkeys reach the inline dialog", () => {
       .map((line) => /^[ \u25b6] \((\w)\) /.exec(line)?.[1])
       .filter((key) => key !== undefined);
   }
+
+  it("rings the configured channels when a prompt opens, and only then", async () => {
+    writeGlobalConfig({
+      permission: { "*": "allow", demo: "ask" },
+      promptNotifications: ["bell"],
+    });
+
+    const cwd = mkdtempSync(join(tmpdir(), "pi-perm-notify-cwd-"));
+    const pi = makeFakePi({ toolNames: ["demo", "quiet"] });
+    piPermissionSystemExtension(pi as unknown as ExtensionAPI);
+
+    const { ctx, press, terminalWrites } = makeTuiCtx(cwd);
+    await fireSessionStart(pi, ctx);
+
+    // A call the policy allows opens no dialog, so nothing rings.
+    await pi.fire(
+      "tool_call",
+      { toolName: "quiet", toolCallId: "notify-allowed", input: {} },
+      ctx,
+    );
+    expect(terminalWrites).toEqual([]);
+
+    const decision = pi.fire(
+      "tool_call",
+      { toolName: "demo", toolCallId: "notify-ask", input: {} },
+      ctx,
+    ) as Promise<{ block?: true }>;
+    await sleep(0);
+
+    expect(terminalWrites).toEqual(["\x07"]);
+
+    press("y");
+    press("y");
+    expect((await decision).block).toBeUndefined();
+    expect(terminalWrites).toEqual(["\x07"]);
+
+    rmSync(cwd, { recursive: true, force: true });
+  });
+
+  describe("notification text", () => {
+    async function openPrompt(sessionName?: string) {
+      writeGlobalConfig({
+        permission: { "*": "allow", demo: "ask" },
+        promptNotifications: ["osc777"],
+      });
+      const cwd = mkdtempSync(join(tmpdir(), "pi-perm-notice-cwd-"));
+      const pi = makeFakePi({ toolNames: ["demo"] });
+      piPermissionSystemExtension(pi as unknown as ExtensionAPI);
+      const { ctx, press, terminalWrites } = makeTuiCtx(cwd, sessionName);
+      await fireSessionStart(pi, ctx);
+
+      const decision = pi.fire(
+        "tool_call",
+        { toolName: "demo", toolCallId: "notice-ask", input: {} },
+        ctx,
+      ) as Promise<{ block?: true }>;
+      await sleep(0);
+      const writes = [...terminalWrites];
+
+      press("y");
+      press("y");
+      await decision;
+      rmSync(cwd, { recursive: true, force: true });
+      return { cwd, writes };
+    }
+
+    it("names the session and the requested tool", async () => {
+      const { writes } = await openPrompt("refactor-auth");
+
+      expect(writes).toEqual([
+        "\x1b]777;notify;pi \u2014 refactor-auth;Permission Required: demo\x07",
+      ]);
+    });
+
+    it("names the working directory for an unnamed session", async () => {
+      const { cwd, writes } = await openPrompt();
+
+      expect(writes).toEqual([
+        `\x1b]777;notify;pi \u2014 ${basename(cwd)};Permission Required: demo\x07`,
+      ]);
+    });
+  });
 
   it("renders and honors the characters the config bound", async () => {
     writeGlobalConfig({

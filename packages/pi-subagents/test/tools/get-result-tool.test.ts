@@ -7,6 +7,7 @@ import {
 } from "#src/tools/get-result-tool";
 import type { Subagent } from "#src/types";
 import type { Theme } from "#src/ui/display";
+import { makeModel } from "#test/helpers/make-model";
 import { createTestSubagent, makeStubExecution } from "#test/helpers/make-subagent";
 import { createMockSession, createSubagentSessionStub, toSubagentSession } from "#test/helpers/mock-session";
 import { STUB_CTX } from "#test/helpers/stub-ctx";
@@ -122,6 +123,23 @@ describe("GetResultTool", () => {
 		expect(text).toContain("Agent: agent-1");
 		expect(text).toContain("completed");
 		expect(text).toContain("All done.");
+	});
+
+	describe("model", () => {
+		it("names the model the agent ran in the report and the TUI details", async () => {
+			const record = createTestSubagent({
+				execution: makeStubExecution({ model: makeModel({ provider: "openai", id: "gpt-5" }) }),
+			});
+			const result = await execute(makeManager(new Map([["agent-1", record]])), { agent_id: "agent-1" });
+			expect(result.content[0].text).toContain("\nModel: openai/gpt-5\n");
+			expect(result.details?.modelName).toBe("openai/gpt-5");
+		});
+
+		it("names no model while the agent's model is unknown", async () => {
+			const result = await execute(makeManager(new Map([["agent-1", createTestSubagent()]])), { agent_id: "agent-1" });
+			expect(result.content[0].text).not.toContain("Model:");
+			expect(result.details?.modelName).toBeUndefined();
+		});
 	});
 
 	it("reports the updates the agent sent during the run", async () => {

@@ -11,8 +11,10 @@
  */
 import { describe, expect, it } from "vitest";
 import { collectCommands } from "#src/access-intent/bash/command-enumeration";
+import { WordReader } from "#src/access-intent/bash/node-text";
 import { getParser } from "#src/access-intent/bash/parser";
 import { BashProgram } from "#src/access-intent/bash/program";
+import { ShellVariables } from "#src/access-intent/bash/shell-variable-expansion";
 import { resolveBashCommandCheck } from "#src/handlers/gates/bash-command";
 import { pathFlavorForPlatform } from "#src/path/path-flavor";
 import { PathNormalizer } from "#src/path/path-normalizer";
@@ -479,7 +481,10 @@ describe("bash command gate — a parse it could not resolve fails closed", () =
       const tree = parser.parse(command);
       if (!tree) throw new Error("parse returned null");
       try {
-        return collectCommands(tree.rootNode);
+        return collectCommands(
+          tree.rootNode,
+          new WordReader(ShellVariables.UNREBOUND),
+        );
       } finally {
         tree.delete();
       }

@@ -134,7 +134,7 @@ export function renderStatusIcon(status: SubagentStatus, theme: Theme): string {
 }
 
 /**
- * Build the stats string: "haiku · thinking: high · ↻5≤30 · 3 tool uses · 33.8k token".
+ * Build the stats string: "anthropic/claude-haiku-4-5 · thinking: high · ↻5≤30 · 3 tool uses · 33.8k token".
  * Returns an empty string when all fields are absent or zero.
  */
 export function renderStats(details: AgentDetails, theme: Theme): string {

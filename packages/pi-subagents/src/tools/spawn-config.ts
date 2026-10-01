@@ -19,6 +19,7 @@ import {
   buildInvocationTags,
   getDisplayName,
   getPromptModeLabel,
+  modelLabel,
 } from "#src/ui/display";
 
 /** Model info extracted from the parent session context. */
@@ -49,7 +50,6 @@ export interface SpawnExecution {
 
 /** Presentation: display/UI values derived from identity and execution. */
 export interface SpawnPresentation {
-  modelName: string | undefined;
   agentTags: string[];
   detailBase: Pick<AgentDetails, "displayName" | "description" | "subagentType" | "modelName" | "tags">;
 }
@@ -119,20 +119,13 @@ export function resolveSpawnConfig(
   const inheritContext = resolvedConfig.inheritContext;
   const runInBackground = resolvedConfig.runInBackground;
 
-  // Compute display model name (only shown when different from parent)
-  const parentModelId = modelInfo.parentModel?.id;
-  const effectiveModelId = model?.id;
-  const modelName =
-    effectiveModelId && effectiveModelId !== parentModelId
-      ? model.name.replace(/^Claude\s+/i, "").toLowerCase()
-      : undefined;
+  const modelName = modelLabel(model);
 
   const effectiveMaxTurns = normalizeMaxTurns(
     resolvedConfig.maxTurns ?? settings.defaultMaxTurns,
   );
 
   const agentInvocation: AgentInvocation = {
-    modelName,
     thinking,
     maxTurns: normalizeMaxTurns(resolvedConfig.maxTurns),
     inheritContext,
@@ -167,7 +160,7 @@ export function resolveSpawnConfig(
       runInBackground,
       agentInvocation,
     },
-    presentation: { modelName, agentTags, detailBase },
+    presentation: { agentTags, detailBase },
   };
 }
 

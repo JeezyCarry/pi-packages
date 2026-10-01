@@ -282,4 +282,18 @@ describe("buildDetails", () => {
     expect(details.durationMs).toBeGreaterThanOrEqual(before - openRecord.startedAt);
     expect(details.durationMs).toBeLessThanOrEqual(after - openRecord.startedAt);
   });
+
+  describe("model label", () => {
+    const spawnBase = { ...base, modelName: "anthropic/claude-sonnet-5-5" };
+
+    it("labels the model the record runs, over the one resolved at spawn", () => {
+      const details = buildDetails(spawnBase, { ...record, model: { provider: "openai", id: "gpt-5" } });
+      expect(details.modelName).toBe("openai/gpt-5");
+    });
+
+    it("keeps the spawn-time label while the record's model is unknown", () => {
+      const details = buildDetails(spawnBase, record);
+      expect(details.modelName).toBe("anthropic/claude-sonnet-5-5");
+    });
+  });
 });

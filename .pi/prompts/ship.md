@@ -1,5 +1,5 @@
 ---
-model: anthropic/claude-sonnet-5, opencode-go/deepseek-v4-flash
+model: anthropic/claude-sonnet-5-5, opencode-go/deepseek-v4-flash
 description: Land the work (trunk or worktree branch), verify CI, close the issue, dispatch the release, and tear down
 ---
 
@@ -152,7 +152,15 @@ Where `<pkg>` is the shipped package from the issue's plan path.
 The script is read-only and offline, and it applies the same path scoping and commit-type rules the release itself will.
 It prints the tag that would be cut, or nothing at all when the package has no releasable commits.
 
-For a repo-root tooling change — no `packages/` file in the range (`git diff --name-only "$PLAN"^..HEAD | grep '^packages/'` is empty), whatever the plan's location — skip the command; every commit is outside the package tree, so nothing releases now.
+First check whether the range touched any `packages/` file, deriving `PLAN` in the same call — a fresh shell carries no earlier step's variables, and an empty `PLAN` makes `git diff` fail on `^..HEAD` while the pipeline reads as "no packages touched":
+
+```bash
+PLAN=$(git log --format='%H' --grep="docs: \(re-\)\?plan .*(#$1)" -1)
+test -n "$PLAN" && git diff --name-only "$PLAN"^..HEAD | grep '^packages/'
+```
+
+An empty result counts only when `PLAN` resolved; with no plan commit, anchor on the parent of the issue's first commit as step 9 describes.
+For a repo-root tooling change — no `packages/` file in the range, whatever the plan's location — skip the command; every commit is outside the package tree, so nothing releases now.
 Say so in the final report and skip the batch-vs-release question.
 
 Then apply the decision recorded in step 2.
@@ -208,7 +216,7 @@ A shipped issue can also supersede open third-party PRs without either being the
 Close each PR that step 2's plan-and-retro read named, with `gh pr comment` then `gh pr close`, never merge, crediting the author by `@login`.
 Read each PR's body first (`gh pr view <M> --json body -q .body`) — what a PR flagged, covered, or omitted is a claim about the PR, and the plan's summary of it is not that source.
 
-Then check whether this push shipped work for **other** issues in the `"$PLAN"^..HEAD` range.
+Then check whether this push shipped work for **other** issues in the `"$PLAN"^..HEAD` range (re-derive `PLAN` in the same call — a fresh shell does not carry the one above).
 A co-shipped issue shows as a stacked refactor/enabler, a subject-trailing `(#M)` commit ref, or a sibling `docs/plans/`/`docs/retro/` file added in range — a body-line `Refs #M` is a citation, not a ship.
 A roadmap step heading that names a second issue (`#### Step 16: … ([#885], with [#896])`) is a fold-in: its work shipped here and it closes with this issue, even where no commit subject carries its number.
 A mid-batch sibling that shipped on its own ship is already closed by it — this scan is for stacked work that never had a ship of its own.

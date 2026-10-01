@@ -54,6 +54,19 @@ describe("renderGetResultLines", () => {
 			);
 		});
 
+		it("names the model right after the agent type", () => {
+			const [first] = renderGetResultLines(
+				makeDetails({ modelName: "anthropic/claude-haiku-4-5" }),
+				"",
+				false,
+				theme,
+			);
+
+			expect(first).toBe(
+				"[success:✓] [dim:Explore] [dim:·] [dim:anthropic/claude-haiku-4-5] [dim:·] [dim:44 tool uses] [dim:·] [dim:95.9k token] [dim:·] [dim:9%] [dim:·] [dim:213.0s]",
+			);
+		});
+
 		it("renders the description and the preview as sub-lines", () => {
 			const lines = renderGetResultLines(makeDetails(), "", false, theme);
 

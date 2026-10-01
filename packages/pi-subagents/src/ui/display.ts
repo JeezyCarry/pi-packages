@@ -35,7 +35,7 @@ export interface AgentDetails {
   activity?: string;
   /** Current spinner frame index (for animated running indicator). */
   spinnerFrame?: number;
-  /** Short model name if different from parent (e.g. "haiku", "sonnet"). */
+  /** The `provider/id` of the model the agent runs (e.g. "anthropic/claude-haiku-4-5"). */
   modelName?: string;
   /** Notable config tags (e.g. ["thinking: high", "inherit context"]). */
   tags?: string[];
@@ -119,6 +119,11 @@ export function formatModel(model: ModelIdentity): string {
   return `${model.provider}/${model.id}`;
 }
 
+/** A model's `provider/id` label, or undefined while the model is unknown. */
+export function modelLabel(model: ModelIdentity | undefined): string | undefined {
+  return model ? formatModel(model) : undefined;
+}
+
 /** Format duration from start/completed timestamps. */
 export function formatDuration(startedAt: number, completedAt?: number): string {
   if (completedAt) return formatMs(completedAt - startedAt);
@@ -142,14 +147,14 @@ export function getPromptModeLabel(type: SubagentType, registry: AgentConfigLook
 /** Mode label is not included — callers add it where they want it. */
 export function buildInvocationTags(
   invocation: AgentInvocation | undefined,
-): { modelName?: string; tags: string[] } {
+): { tags: string[] } {
   const tags: string[] = [];
   if (!invocation) return { tags };
   if (invocation.thinking) tags.push(`thinking: ${invocation.thinking}`);
   if (invocation.inheritContext) tags.push("inherit context");
   if (invocation.runInBackground) tags.push("background");
   if (invocation.maxTurns != null) tags.push(`max turns: ${invocation.maxTurns}`);
-  return { modelName: invocation.modelName, tags };
+  return { tags };
 }
 
 /** Truncate text to a single line, max `len` chars. */

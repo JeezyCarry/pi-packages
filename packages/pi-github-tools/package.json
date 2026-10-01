@@ -1,6 +1,6 @@
 {
   "name": "@gotgenes/pi-github-tools",
-  "version": "5.0.0",
+  "version": "5.0.1",
   "description": "Pi extension providing deterministic GitHub CI, release, and issue tools.",
   "type": "module",
   "imports": {
@@ -54,7 +54,8 @@
     ]
   },
   "peerDependencies": {
-    "@earendil-works/pi-coding-agent": ">=0.75.0"
+    "@earendil-works/pi-coding-agent": ">=0.75.0",
+    "typebox": "*"
   },
   "devDependencies": {
     "@biomejs/biome": "catalog:",

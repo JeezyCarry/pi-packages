@@ -67,6 +67,22 @@ Extension-owned JSON config, project overriding global (mirrors `pi-github-tools
 `indexOnStartup` (boolean, default `true`): when `false`, no background startup index; the index is built lazily on first search or via `/colgrep-reindex`.
 Missing file is silent; malformed file warns and defaults apply.
 
+## Upstream assumptions
+
+The `/upstream-impact` watchlist for this package; the `upstream-watch` skill defines the impact classes.
+Paths are relative to the Pi checkout.
+
+| Our assumption                                                                                                              | Upstream file                                                                                                                                      | Breaks as                                                                                     |
+| --------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| A successful `write` or `edit` `tool_result` is the only reindex signal a file change needs                                 | `packages/coding-agent/src/core/agent-session.ts` (`_afterToolCall`); `packages/coding-agent/src/core/tools/index.ts`                              | Coverage-gap: a new mutating built-in (or a bash-driven edit) leaves the index silently stale |
+| `promptSnippet` and `promptGuidelines` from `registerTool` are rendered into the system prompt's tools and rules sections   | `packages/coding-agent/src/core/system-prompt.ts` (`buildSystemPromptSections`, `buildRules`)                                                      | Behavioral-silent: the tool still works, but the model loses the colgrep-vs-grep guidance     |
+| `pi.exec` resolves with `{stdout, stderr, code, killed}` and does not reject on a non-zero exit                             | `packages/coding-agent/src/core/exec.ts` (`execCommand`, `ExecResult`)                                                                             | Behavioral-silent: availability, index-status, and search error handling misfire              |
+| `truncateHead`, `DEFAULT_MAX_LINES`, and `DEFAULT_MAX_BYTES` are root exports with stable semantics                         | `packages/coding-agent/src/core/tools/truncate.ts`                                                                                                 | Compile-time on removal; behavioral-silent if the limits change                               |
+| `renderCall`/`renderResult` receive a `context.lastComponent` reusable as a `Text`, and the theme color names we pass exist | `packages/coding-agent/src/core/extensions/types.ts` (`ToolDefinition.renderResult`); `packages/coding-agent/src/modes/interactive/theme/theme.ts` | Behavioral-silent, cosmetic: the cast is unchecked                                            |
+| `getAgentDir()` honors `PI_CODING_AGENT_DIR`, and `ctx.cwd`/`ctx.ui` are ready at `session_start`                           | `packages/coding-agent/src/config.ts` (`getAgentDir`); `packages/coding-agent/src/core/extensions/types.ts`                                        | Behavioral-silent: the global config is not read                                              |
+
+No test runs against real Pi; every test mocks `pi`, so none is a canary.
+
 ## Testing
 
 - Mock the injected `Exec` in `lib/` tests so every test runs offline — no real `colgrep` calls.

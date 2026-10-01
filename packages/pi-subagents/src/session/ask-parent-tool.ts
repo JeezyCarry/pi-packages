@@ -16,7 +16,7 @@
  */
 
 import { defineTool } from "@earendil-works/pi-coding-agent";
-import { Type } from "@sinclair/typebox";
+import { Type } from "typebox";
 
 export const ASK_PARENT_TOOL_NAME = "ask_parent";
 

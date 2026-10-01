@@ -23,6 +23,7 @@ function makeReport(overrides: Partial<AgentReport> = {}): AgentReport {
 		conversation: undefined,
 		transcriptPath: undefined,
 		resumeRefusal: undefined,
+		model: undefined,
 		...overrides,
 	};
 }
@@ -200,6 +201,17 @@ describe("formatAgentReport", () => {
 		expect(text).toBe(
 			"Agent: agent-1\n" +
 				"Type: General | Status: completed | Tool uses: 3 | 33.8k token | Context: 43% | Compactions: 1 | Duration: 12.3s\n" +
+				"Description: Investigate the bug\n\n" +
+				"All done.",
+		);
+	});
+
+	it("names the model on its own line between the type line and the description", () => {
+		const text = formatAgentReport(makeReport({ model: "anthropic/claude-haiku-4-5" }));
+		expect(text).toBe(
+			"Agent: agent-1\n" +
+				"Type: General | Status: completed | Tool uses: 3 | Duration: 12.3s\n" +
+				"Model: anthropic/claude-haiku-4-5\n" +
 				"Description: Investigate the bug\n\n" +
 				"All done.",
 		);

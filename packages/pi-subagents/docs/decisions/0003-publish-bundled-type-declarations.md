@@ -42,7 +42,7 @@ Emit a single, self-contained `dist/public.d.ts` for the public surface and adve
 }
 ```
 
-- `rollup-plugin-dts` rolls the declaration graph rooted at `src/service/service.ts` into one file, inlining the internal `#src/*` types and keeping peer-dependency types (`@earendil-works/*`, `@sinclair/typebox`) external.
+- `rollup-plugin-dts` rolls the declaration graph rooted at `src/service/service.ts` into one file, inlining the internal `#src/*` types and keeping peer-dependency types (`@earendil-works/*`, `typebox`) external.
   We ship `.ts` source, so only the declaration bundle is emitted — no JS.
 - The bundle is generated at `prepack` time and shipped via a `files` allowlist; it is gitignored and never committed.
 - `default` → `./src/service/service.ts` fixes the stale path and serves runtime consumers; its `import type` lines erase, so no runtime `#src/*` resolution is needed.

@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [21.9.0](https://github.com/gotgenes/pi-packages/compare/pi-subagents-v21.8.1...pi-subagents-v21.9.0) (2026-10-01)
+
+
+### Features
+
+* **pi-subagents:** always show the subagent's model as provider/id on the Agent tool's stats line ([67e9c3c](https://github.com/gotgenes/pi-packages/commit/67e9c3c79c3f34be6bf3a7a6171fc3ed9de474f2)), closes [#755](https://github.com/gotgenes/pi-packages/issues/755)
+* **pi-subagents:** show the model a subagent actually runs on in the Agent tool's stats line after a mid-run switch ([443391c](https://github.com/gotgenes/pi-packages/commit/443391c8cfa0c07d0e2cbddd3df2495245208838)), closes [#755](https://github.com/gotgenes/pi-packages/issues/755)
+* **pi-subagents:** name the subagent's model in the get_subagent_result report ([0785f3f](https://github.com/gotgenes/pi-packages/commit/0785f3f1f2b246381b9aa1b4e4a92debdfaf96ac)), closes [#755](https://github.com/gotgenes/pi-packages/issues/755)
+
+## [21.8.1](https://github.com/gotgenes/pi-packages/compare/pi-subagents-v21.8.0...pi-subagents-v21.8.1) (2026-09-29)
+
+
+### Bug Fixes
+
+* **pi-subagents:** stop Pi's host-provided dependency warning at startup ([4525649](https://github.com/gotgenes/pi-packages/commit/4525649b04955788191b8de10af0721bd33a81b3)), closes [#994](https://github.com/gotgenes/pi-packages/issues/994)
+
 ## [21.8.0](https://github.com/gotgenes/pi-packages/compare/pi-subagents-v21.7.7...pi-subagents-v21.8.0) (2026-09-28)
 
 

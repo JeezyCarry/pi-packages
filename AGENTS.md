@@ -152,6 +152,7 @@ Before you do the thing in the left column, load the skill in the right one.
 | run or read `fallow`                                                                                 | `fallow`                 |
 | plan an improvement round or edit a roadmap                                                          | `improvement-discovery`  |
 | decide when an extension flushes, notifies, or intercepts                                            | `pi-extension-lifecycle` |
+| assess a new Pi release or diagnose a Pi version regression                                          | `upstream-watch`         |
 | finish `/tdd-plan` or `/build-plan`                                                                  | `pre-completion`         |
 | file a GitHub issue                                                                                  | `roadmap-fit`            |
 | settle a design in `/plan-issue`, before writing the plan                                            | `tidy-first`             |

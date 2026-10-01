@@ -1,8 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { type ForegroundParams, runForeground } from "#src/tools/foreground-runner";
+import type { Subagent } from "#src/types";
 import { createToolDeps } from "#test/helpers/make-deps";
+import { makeModel } from "#test/helpers/make-model";
 import { createResolvedSpawnConfig } from "#test/helpers/make-spawn-config";
-import { createTestSubagent } from "#test/helpers/make-subagent";
+import { createTestSubagent, makeStubExecution } from "#test/helpers/make-subagent";
 import { STUB_SNAPSHOT } from "#test/helpers/stub-ctx";
 
 function makeParams(overrides: Partial<ForegroundParams> = {}): ForegroundParams {
@@ -238,6 +240,45 @@ describe("runForeground", () => {
 
 		resolve(createTestSubagent({ result: "done" }));
 		await runPromise;
+	});
+
+	describe("model label", () => {
+		const running = createTestSubagent({
+			status: "running",
+			completedAt: undefined,
+			execution: makeStubExecution({ model: makeModel({ provider: "openai", id: "gpt-5" }) }),
+		});
+		const params = () => makeParams({ config: createResolvedSpawnConfig({ model: "anthropic/claude-sonnet-5-5" }) });
+
+		it("streams the model the record runs once its session exists", async () => {
+			const { promise, resolve } = Promise.withResolvers<Subagent>();
+			const spawnAndWait = vi.fn(
+				(_snapshot: unknown, _type: unknown, _prompt: unknown, options: { observer?: { onSessionCreated?: (agent: Subagent) => void } }) => {
+					options.observer?.onSessionCreated?.(running);
+					return promise;
+				},
+			);
+			const deps = createToolDeps({ manager: { ...createToolDeps().manager, spawnAndWait } });
+			const onUpdate = vi.fn();
+			const runPromise = runForeground(deps.manager, params(), undefined, onUpdate);
+
+			await vi.advanceTimersByTimeAsync(100);
+			// Partial match: the streamed details also carry a spinner frame and a wall-clock duration.
+			expect(onUpdate).toHaveBeenLastCalledWith(
+				expect.objectContaining({ details: expect.objectContaining({ modelName: "openai/gpt-5" }) }),
+			);
+
+			resolve(createTestSubagent({ result: "done" }));
+			await runPromise;
+		});
+
+		it("labels the completed result with the model the record ran", async () => {
+			const deps = createToolDeps({
+				manager: { ...createToolDeps().manager, spawnAndWait: vi.fn().mockResolvedValue(running) },
+			});
+			const result = await runForeground(deps.manager, params(), undefined, undefined);
+			expect(result.details?.modelName).toBe("openai/gpt-5");
+		});
 	});
 
 	it("clears spinner interval on error and does not leave it running", async () => {

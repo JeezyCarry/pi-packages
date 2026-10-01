@@ -37,6 +37,28 @@ describe("BashProgram", () => {
       realpathSync.mockImplementation((p: string) => p);
     });
 
+    describe("a token spelled from a HOME the program reassigns", () => {
+      /** Each rule candidate's token. */
+      async function candidateTokensOf(command: string): Promise<string[]> {
+        const program = await BashProgram.parse(command, normalizer);
+        return program.pathRuleCandidates().map(({ token }) => token);
+      }
+
+      it.each([
+        'HOME=/etc; cat "$HOME/shadow"',
+        "HOME=/etc; cat ${HOME}/shadow",
+        "HOME=/etc; cat ~/shadow",
+      ])("leaves the path surface for %s", async (command) => {
+        expect(await candidateTokensOf(command)).toEqual([]);
+      });
+
+      it("keeps a token spelled from a HOME nothing reassigns", async () => {
+        expect(await candidateTokensOf('cat "$HOME/shadow"')).toEqual([
+          join(homedir(), "shadow"),
+        ]);
+      });
+    });
+
     describe("a redirect's target is projected by its role (#609)", () => {
       /** Each rule candidate's token, effect, and policy match values. */
       async function ruleCandidatesOf(command: string) {
@@ -742,6 +764,21 @@ describe("BashProgram", () => {
         ]);
       });
 
+      it("withholds a wrapped reader's exemption once its argument's HOME is reassigned", async () => {
+        const program = await BashProgram.parse(
+          'HOME=-delete; xargs find "$HOME"',
+          normalizer,
+        );
+        expect(program.commands()).toEqual([
+          { text: "HOME=-delete" },
+          {
+            text: 'xargs find "$HOME"',
+            wrapperKind: "indirection",
+            executedUnit: 'find "$HOME"',
+          },
+        ]);
+      });
+
       it("keeps the core-reader exemption when a tail redirect duplicates a descriptor", async () => {
         const program = await BashProgram.parse(
           "xargs grep foo <<EOF >&2\nb\nEOF",
@@ -1383,6 +1420,9 @@ describe("BashProgram", () => {
         "xargs -0 rg pattern",
         "find . -name '*.ts' -exec wc -l {} +",
         "sudo timeout 5 xargs grep foo",
+        "xargs sed -n p",
+        "find . -name '*.md' -exec sed -n 1p {} +",
+        "xargs awk '{print}'",
       ])("exempts %s", async (command) => {
         await expect(exemptions(command)).resolves.toEqual(["core-reader"]);
       });
@@ -1392,8 +1432,42 @@ describe("BashProgram", () => {
         ["xargs -I{} sh -c 'grep -l x {}'", "the payload is not re-parsed"],
         ["find . -exec sh -c 'grep x' \\;", "the payload is not re-parsed"],
         ["xargs sort -o /tmp/x", "`-o` withdraws sort's read claim"],
+        ["xargs sed -i s/a/b/", "`-i` withdraws sed's read claim"],
+        ["xargs sed 'w out'", "a `w` command withdraws sed's read claim"],
+        ["xargs awk -f p.awk", "`-f` withdraws awk's read claim"],
       ])("does not exempt %s (%s)", async (command) => {
         await expect(exemptions(command)).resolves.toEqual([undefined]);
+      });
+
+      describe("a withdrawing option spelled with quotes", () => {
+        // The shell removes the quotes before the program sees the option, so
+        // the core must read the same resolved word the program receives.
+        it.each([
+          "xargs find . '-delete'",
+          'xargs find . "-delete"',
+          "xargs sort '-o' /tmp/x",
+          "xargs fd foo '--exec' rm",
+        ])("does not exempt %s", async (command) => {
+          await expect(exemptions(command)).resolves.toEqual([undefined]);
+        });
+
+        it("does not exempt a computed word that may spell a withdrawing option", async () => {
+          await expect(exemptions("xargs find . $A")).resolves.toEqual([
+            undefined,
+          ]);
+        });
+
+        it("still exempts a computed word behind a literal", async () => {
+          await expect(
+            exemptions("xargs find packages/*/docs"),
+          ).resolves.toEqual(["core-reader"]);
+        });
+
+        it("still exempts a quoted argument that withdraws nothing", async () => {
+          await expect(exemptions("xargs grep 'foo'")).resolves.toEqual([
+            "core-reader",
+          ]);
+        });
       });
 
       it("is absent for a command that is not a wrapper", async () => {
