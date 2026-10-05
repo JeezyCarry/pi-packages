@@ -1,5 +1,5 @@
 /**
- * Force a `reason` on every bash tool call.
+ * Force a `reason` on every bash and exec_command tool call.
  *
  * Overrides the built-in `bash` tool (Pi supports overriding by registering a
  * tool with the same name) with a schema that REQUIRES a concise `reason`
@@ -11,6 +11,12 @@
  * Real execution is delegated unchanged to Pi's own bash tool via
  * `createBashTool`, so behavior, sandboxing, and bash permission rules are
  * preserved (the tool is still named `bash`, and `command` is still in input).
+ *
+ * exec_command (@howaboua/pi-codex-conversion) has no reason field in its
+ * schema and we cannot replace another extension's tool. The permission
+ * system's shellTools alias already routes it through the bash gates and our
+ * reason patches read input.reason, so enforce the field at call time:
+ * block without a reason; the model retries with one.
  *
  * Source of truth: this file (part of the pi-packages fork repo). Installed
  * into `~/.pi/agent/extensions/reason-bash/` by `install.sh`.
@@ -51,5 +57,20 @@ export default function (pi: ExtensionAPI) {
 				ctx,
 			);
 		},
+	});
+
+	pi.on("tool_call", async (event) => {
+		if (event.toolName !== "exec_command") return undefined;
+		const input = event.input;
+		const reason =
+			typeof input === "object" && input !== null && "reason" in input
+				? (input as { reason?: unknown }).reason
+				: undefined;
+		if (typeof reason === "string" && reason.trim().length > 0) return undefined;
+		return {
+			block: true,
+			reason:
+				"exec_command requires a 'reason' field. Retry the same call with a concise 'reason' stating the intent of the command and what it accomplishes.",
+		};
 	});
 }
