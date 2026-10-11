@@ -23,6 +23,7 @@ Alternatively, add it to your Pi settings (`~/.pi/agent/settings.json`):
 ## Prerequisites
 
 - [GitHub CLI (`gh`)](https://cli.github.com/) installed and authenticated (`gh auth login`)
+- [Git](https://git-scm.com/) on `PATH`, for the `issue_close` commit-SHA check
 - Node.js ≥ 22
 
 ## Tools
@@ -82,12 +83,17 @@ In a polling tool the backoff counts against the call's `timeout`, so retries ca
 #### `issue_close`
 
 Close a GitHub issue with an optional comment.
+Before closing, each lowercase word-bounded hex token of 7 to 40 characters in the comment must resolve with `git rev-parse --verify <token>^{commit}` in the local checkout.
+If any does not, the tool refuses, naming the tokens, and nothing is closed or posted.
+The check does not fetch and does not test ancestry.
+Set `skip_sha_validation` only to cite a foreign commit or a non-commit hash — correct a typo instead.
 
-| Parameter      | Type   | Required | Description                                |
-| -------------- | ------ | -------- | ------------------------------------------ |
-| `issue_number` | number | yes      | The issue number to close                  |
-| `comment`      | string | no       | Comment to add when closing                |
-| `reason`       | string | no       | `"completed"` (default) or `"not_planned"` |
+| Parameter             | Type    | Required | Description                                 |
+| --------------------- | ------- | -------- | ------------------------------------------- |
+| `issue_number`        | number  | yes      | The issue number to close                   |
+| `comment`             | string  | no       | Comment to add when closing                 |
+| `reason`              | string  | no       | `"completed"` (default) or `"not_planned"`  |
+| `skip_sha_validation` | boolean | no       | Skip local SHA resolution (default refuses) |
 
 ## Usage example
 
@@ -121,7 +127,7 @@ Making a tool wait where a human would otherwise wait, making a failure legible 
   Earlier versions shipped `release_pr_find`, `release_pr_merge`, and `release_watch`, which encoded release-please's pull-request conventions.
   A release triggered as a workflow is an ordinary Actions run, so `ci_find` and `ci_watch` already follow it and no release-specific tool is needed.
 - _A GitHub API client._
-  The `gh` CLI is the sole external binary dependency, and there are no runtime dependencies at all.
+  The tools shell out to the `gh` CLI (and `git`, for `issue_close`'s SHA check), and there are no runtime dependencies at all.
 - _Auto-retrying mutations._
   Reads retry on transient failures; `issue_close` does not, since a retried close would post a duplicate comment.
 

@@ -176,6 +176,31 @@ const CWD_SECTION_OPEN = "<cwd>";
 /** Closing tag of that section. */
 const CWD_SECTION_CLOSE = "</cwd>";
 
+/** Opening tag of the section Pi ≥0.86 lists the session's tools in. */
+const TOOLS_SECTION_OPEN = "<tools>";
+
+/** Closing tag of that section. */
+const TOOLS_SECTION_CLOSE = "</tools>";
+
+/** Opening tag of the section Pi ≥0.86 writes the session's guidelines in. */
+const RULES_SECTION_OPEN = "<rules>";
+
+/** Closing tag of that section. */
+const RULES_SECTION_CLOSE = "</rules>";
+
+/**
+ * Opening tags of the sections Pi ≥0.86 renders below `<rules>`, in its
+ * order: `<docs>`, the `--append-system-prompt` addendum, project context,
+ * the skills catalogue, and the cwd.
+ */
+const SECTIONS_BELOW_RULES: ReadonlySet<string> = new Set([
+  "<docs>",
+  "<addendum>",
+  "<project_context>",
+  "<skills>",
+  "<cwd>",
+]);
+
 /** Opening tag of the block Pi renders the session's context files into. */
 const PROJECT_CONTEXT_OPEN = "<project_context>";
 
@@ -211,9 +236,12 @@ const PROJECT_CONTEXT_LEAD_IN = "Project-specific instructions and guidelines:";
  * Everything from the first such layer onward is therefore dropped. What
  * precedes it is returned byte for byte, so it stays a shared prefix with the
  * parent's prompt for hosts that reuse one over the system text (#180, #400).
- * That is why no extension may edit the region in place: `Available tools:`
- * sits a few hundred characters into it, and narrowing it there ended the
- * shared prefix for every child with a narrowed tool set (#890).
+ *
+ * One exception sits inside that region: from 0.86 Pi renders the session's
+ * tool surface as `<tools>` and `<rules>` sections just below the preamble.
+ * They are as session-resolved as the catalogue, so they are excised rather
+ * than inherited (ADR 0011); the shared prefix then ends at the preamble for a
+ * parent that renders them, and is unchanged for one that does not.
  *
  * A prompt carrying neither layer is not one `buildSystemPrompt` assembled, and
  * is returned unchanged.
@@ -229,14 +257,69 @@ function inheritedIdentity(
   cutProjectContext: boolean,
 ): string {
   const lines = prompt.split("\n");
-  const tailStart = sessionResolvedTailStart(lines, parentCwd, cutProjectContext);
-  return tailStart === -1
-    ? prompt
-    : lines.slice(0, tailStart).join("\n").trimEnd();
+  const tail = sessionResolvedTailStart(lines, parentCwd, cutProjectContext);
+  if (tail.at === -1) return prompt;
+  const head = lines.slice(0, tail.at);
+  const kept = tail.shape === "section" ? withoutToolSurface(head) : head;
+  return kept.join("\n").trimEnd();
 }
 
 /**
- * Line index at which Pi's per-session layers begin, or -1 when none is present.
+ * The head with Pi ≥0.86's `<tools>` and `<rules>` sections excised, or the
+ * head unchanged when Pi wrote neither there.
+ *
+ * Both sections are rendered from the parent session's own tool set, and Pi
+ * writes neither for a child, whose prompt is a `customPrompt` — so an
+ * inherited copy is the parent's tool surface presented as the child's.
+ *
+ * Located positionally, like every other anchor here: Pi writes the pair
+ * adjacent, `<rules>` one blank line below `</tools>`, and above every later
+ * section it renders. A pair quoted in an addendum or a context file sits below
+ * that bound, and a lone `<tools>` block is not Pi's. The blank line below
+ * `</rules>` goes with the pair, so the head reads exactly as Pi renders it
+ * without them.
+ */
+function withoutToolSurface(head: readonly string[]): readonly string[] {
+  const bound = laterSectionStart(head);
+  const toolsAt = head.indexOf(TOOLS_SECTION_OPEN);
+  if (toolsAt === -1 || toolsAt >= bound) return head;
+  const toolsCloseAt = head.indexOf(TOOLS_SECTION_CLOSE, toolsAt);
+  if (toolsCloseAt === -1 || toolsCloseAt >= bound) return head;
+  const rulesAt = toolsCloseAt + 2;
+  if (head[toolsCloseAt + 1] !== "" || head[rulesAt] !== RULES_SECTION_OPEN) {
+    return head;
+  }
+  const rulesCloseAt = head.indexOf(RULES_SECTION_CLOSE, rulesAt);
+  if (rulesCloseAt === -1 || rulesCloseAt >= bound) return head;
+  const spanEnd = head[rulesCloseAt + 1] === "" ? rulesCloseAt + 2 : rulesCloseAt + 1;
+  return [...head.slice(0, toolsAt), ...head.slice(spanEnd)];
+}
+
+/**
+ * Line index of the first section Pi renders below `<rules>`, or the line
+ * count when the head carries none of them.
+ */
+function laterSectionStart(head: readonly string[]): number {
+  const at = head.findIndex((line) => SECTIONS_BELOW_RULES.has(line));
+  return at === -1 ? head.length : at;
+}
+
+/**
+ * Which of Pi's prompt renderers anchored the session-resolved tail: the ≤0.85
+ * `Current working directory:` footer, the ≥0.86 `<cwd>` section, or neither
+ * (a prompt something downstream rewrote).
+ */
+type PromptShape = "footer" | "section" | "unanchored";
+
+/** Where the session-resolved tail begins, and the prompt shape that placed it. */
+interface AnchoredTail {
+  /** Line index at which the tail begins, or -1 when none is present. */
+  readonly at: number;
+  readonly shape: PromptShape;
+}
+
+/**
+ * Where Pi's per-session layers begin, and the prompt shape that anchored them.
  *
  * The catalogue precedes the footer, so cutting at the catalogue already
  * removes it; the footer is the anchor only for a parent session that resolved
@@ -249,16 +332,17 @@ function sessionResolvedTailStart(
   lines: readonly string[],
   parentCwd: string,
   cutProjectContext: boolean,
-): number {
-  const tailAt = cwdAnchoredTailStart(lines, parentCwd);
-  if (!cutProjectContext || tailAt === -1) return tailAt;
-  const projectContextAt = projectContextStart(lines, tailAt);
-  return projectContextAt === -1 ? tailAt : projectContextAt;
+): AnchoredTail {
+  const tail = cwdAnchoredTailStart(lines, parentCwd);
+  if (!cutProjectContext || tail.at === -1) return tail;
+  const projectContextAt = projectContextStart(lines, tail.at);
+  return projectContextAt === -1 ? tail : { ...tail, at: projectContextAt };
 }
 
 /**
- * Line index at which Pi's per-session layers begin, across both of its
- * prompt renderers, or -1 when none is present.
+ * Where Pi's per-session layers begin across both of its prompt renderers —
+ * a line index, or -1 when none is present — and which renderer's shape
+ * placed them.
  *
  * Through 0.85 the layers end in a `Current working directory:` footer line,
  * and the catalogue is anchored to it positionally. From 0.86 the prompt is
@@ -272,19 +356,21 @@ function sessionResolvedTailStart(
 function cwdAnchoredTailStart(
   lines: readonly string[],
   parentCwd: string,
-): number {
+): AnchoredTail {
   const footerAt = lines.lastIndexOf(
     `Current working directory: ${toPromptPath(parentCwd)}`,
   );
   if (footerAt !== -1) {
     const catalogueAt = skillsSectionStart(lines, footerAt);
-    return catalogueAt === -1 ? footerAt : catalogueAt;
+    return { at: catalogueAt === -1 ? footerAt : catalogueAt, shape: "footer" };
   }
   const cwdAt = cwdSectionStart(lines, parentCwd);
-  if (cwdAt !== -1) return skillsSectionWrapperStart(lines, cwdAt);
+  if (cwdAt !== -1) {
+    return { at: skillsSectionWrapperStart(lines, cwdAt), shape: "section" };
+  }
   // Neither cwd layer: something downstream rewrote a 0.85-shaped prompt, and
   // the last closing tag is the best remaining guess.
-  return skillsSectionStart(lines, -1);
+  return { at: skillsSectionStart(lines, -1), shape: "unanchored" };
 }
 
 /**

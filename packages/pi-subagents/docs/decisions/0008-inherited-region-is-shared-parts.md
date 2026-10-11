@@ -1,5 +1,5 @@
 ---
-status: accepted
+status: amended by 0011
 date: 2026-09-08
 ---
 
@@ -7,9 +7,10 @@ date: 2026-09-08
 
 ## Status
 
-Accepted.
+Accepted, and amended by [ADR 0011].
 Amends [ADR 0006], which stands: a child still inherits the parent prompt's identity region and nothing after it.
 What this record changes is the *goal* that placement serves, and the claim the package makes about it.
+[ADR 0011] excises Pi's `<tools>` and `<rules>` sections from the region on the section-shaped prompt, which ends the shared prefix at the preamble for a parent that renders them and replaces the accepted residual below.
 
 ## Context
 
@@ -66,6 +67,7 @@ It sat after the identity, so removing it costs no prefix.
 - A child gets tool guidance for the tools it actually holds, rendered per session, instead of a fixed five-tool assertion.
 - **Accepted residual:** with `pi-permission-system` absent, nothing restates a child's tool list and it still inherits its parent's.
   Tracked as [#901]; this package has no `before_agent_start` handler today, and adding one is that issue's work.
+  On the section-shaped prompt [ADR 0011] replaces this residual: such a child now carries no tool list at all rather than its parent's.
 - A consumer that projects a child's prompt by matching the parent's — `pi-claude-bridge` — is helped rather than hindered: the region it looks for is verbatim again.
   That interaction is recorded, with what remains unverified, in [its ADR 0014].
 - The region is still Pi's preamble, which a provider that re-homes the prompt into another harness carries into that harness's API.
@@ -78,4 +80,5 @@ It sat after the identity, so removing it costs no prefix.
 [#883]: https://github.com/gotgenes/pi-packages/issues/883
 [ADR 0006]: 0006-inherited-prompt-is-identity-only.md
 [ADR 0009]: 0009-portable-inheritance-is-provider-scoped.md
+[ADR 0011]: 0011-tool-surface-sections-are-session-resolved.md
 [its ADR 0014]: https://github.com/gotgenes/pi-packages/blob/main/packages/pi-permission-system/docs/decisions/0014-tool-surface-is-node-local-prose.md

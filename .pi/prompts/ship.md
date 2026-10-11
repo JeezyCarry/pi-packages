@@ -71,11 +71,13 @@ A decision presented early from the plan is far less likely to be reversed than 
      Record the decision.
    - Any other `**Release:**` value (`ship independently` or `ship now — batch "<name>" tail`) → record "release now"; note the recommendation in the final report; do **not** ask.
    - No `**Release:**` marker, or no plan found → record "release now" (default); do **not** ask, and say so in the final report rather than letting the absence pass silently.
-3. Read the issue's retro file in full — `docs/retro/NNNN-*.md` or `packages/*/docs/retro/NNNN-*.md`, matching the plan's `NNNN`.
+3. Read the issue's retro file in full, with `git show` or `Read`, never a keyword grep — `docs/retro/NNNN-*.md` or `packages/*/docs/retro/NNNN-*.md`, matching the plan's `NNNN`.
    In the worktree lane it is on the branch (`git show "<branch>:<retro-path>"`), and its `## Stage: Sync (worktree)` entry is where the peer records release-relevant handoff — a sibling package bumped by a docs-only commit, work deferred to this ship, a PR to close.
    Do this in **both** lanes: a plan's risk table and the planning and TDD stage notes routinely record a ship-time close target — an adopted third-party PR — that no commit in the range mentions.
    A step that only greps the plan for `**Release:**` cannot see it.
    Carry what you find into step 9 and step 10.
+   A verification the stage notes say has not run (a manual or end-to-end check) is a decision, not a report line: ask the operator now whether to run it before step 9 or ship without it, and record the answer in the close comment.
+   A ship-time comment on another issue takes its content from the plan's or retro's wording, not a paraphrase of the hit that named it.
 
 This section only reads and (conditionally) asks — it performs no git, push, or CI action.
 Step 8 applies the recorded release decision.
@@ -196,7 +198,7 @@ The comment should include:
 - One sentence on user-visible behavior change, worded from the feat/fix commit bodies and the TDD stage note — name the entry point as the code spells it (grep it), never from memory.
 - A note flagging any breaking change (matches `feat!:` commits).
 - If the change unblocks or partially addresses other issues, mention them.
-- Credit by `@login` any third party whose comment supplied the shipped design or measured the defect — read `gh issue view $1 --json comments` first; the commits carry a `Co-authored-by:` only if planning recorded one.
+- Credit by `@login` the issue's author or any commenter who measured the defect or supplied the shipped design — read `gh issue view $1 --json author,comments` first, and skip the operator's own login (`gh api user --jq .login`); the commits carry a `Co-authored-by:` only if planning recorded one.
 - Do not cite a released version — step 10 dispatches the release after this comment, so a version here is a prediction.
   When the release was deferred (mid-batch), say the fix is on `main` and releases with the batch.
 
@@ -221,6 +223,7 @@ A co-shipped issue shows as a stacked refactor/enabler, a subject-trailing `(#M)
 A roadmap step heading that names a second issue (`#### Step 16: … ([#885], with [#896])`) is a fold-in: its work shipped here and it closes with this issue, even where no commit subject carries its number.
 A mid-batch sibling that shipped on its own ship is already closed by it — this scan is for stacked work that never had a ship of its own.
 Close each with its own short summary — `refactor:` commits are omitted from the changelog, so a stacked refactor issue leaves no reminder.
+A co-shipped issue already `CLOSED` still gets its summary: `gh api repos/gotgenes/pi-packages/issues/<M>/events --jq '.[]|select(.event=="closed")'` showing a `commit_id` means a keyword auto-closed it, so post the summary with `gh issue comment`.
 
 ## 10. Dispatch the release
 

@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { AgentTypeRegistry } from "#src/config/agent-types";
+import type { PersistedRunSummary } from "#src/persisted-record";
 import type { AgentSessionEvent, SessionMessage } from "#src/types";
 import { fileSnapshotSource, listNavigableAgents, liveSource, type NavigableSubagent, type TranscriptSource } from "#src/ui/session-navigation";
 import { makeNavigable } from "#test/helpers/make-navigable";
@@ -8,12 +9,12 @@ const registry = new AgentTypeRegistry(() => new Map());
 
 describe("listNavigableAgents", () => {
   it("returns an empty list for no agents", () => {
-    expect(listNavigableAgents([], registry)).toEqual([]);
+    expect(listNavigableAgents([], registry, [])).toEqual([]);
   });
 
   it("makes a session-ready record a live entry", () => {
     const ready = makeNavigable({ id: "ready", isSessionReady: () => true });
-    const entries = listNavigableAgents([ready], registry);
+    const entries = listNavigableAgents([ready], registry, []);
     expect(entries).toHaveLength(1);
     const [entry] = entries;
     expect(entry.kind).toBe("live");
@@ -28,7 +29,7 @@ describe("listNavigableAgents", () => {
       description: "Investigate the bug",
       toolUses: 3,
     });
-    const [entry] = listNavigableAgents([released], registry);
+    const [entry] = listNavigableAgents([released], registry, []);
     expect(entry.kind).toBe("snapshot");
     expect(entry.kind === "snapshot" && entry.outputFile).toBe("/tasks/released-1.jsonl");
     expect(entry.label).toBe("Agent (Investigate the bug) · 3 tools · completed · 3.0s · session released (snapshot)");
@@ -36,7 +37,7 @@ describe("listNavigableAgents", () => {
 
   it("drops a record with neither a live session nor an outputFile", () => {
     const gone = makeNavigable({ id: "gone", isSessionReady: () => false, outputFile: undefined });
-    expect(listNavigableAgents([gone], registry)).toEqual([]);
+    expect(listNavigableAgents([gone], registry, [])).toEqual([]);
   });
 
   it("builds a label with name, description, tool count, status, and duration", () => {
@@ -48,7 +49,7 @@ describe("listNavigableAgents", () => {
       startedAt: 1000,
       completedAt: 4000,
     });
-    const [entry] = listNavigableAgents([record], registry);
+    const [entry] = listNavigableAgents([record], registry, []);
     // getDisplayName resolves "general-purpose" against the empty registry to its fallback display name.
     expect(entry.label).toBe("Agent (Investigate the bug) · 3 tools · completed · 3.0s");
   });
@@ -56,7 +57,7 @@ describe("listNavigableAgents", () => {
   describe("heading", () => {
     it("names a live entry's agent, mode, and task", () => {
       const record = makeNavigable({ type: "general-purpose", description: "Investigate the bug" });
-      const [entry] = listNavigableAgents([record], registry);
+      const [entry] = listNavigableAgents([record], registry, []);
       expect(entry.heading).toEqual({ name: "Agent", modeLabel: "twin", description: "Investigate the bug" });
     });
 
@@ -66,23 +67,64 @@ describe("listNavigableAgents", () => {
         outputFile: "/tasks/released-1.jsonl",
         description: "Investigate the bug",
       });
-      const [entry] = listNavigableAgents([released], registry);
+      const [entry] = listNavigableAgents([released], registry, []);
       expect(entry.heading).toEqual({ name: "Agent", modeLabel: "twin", description: "Investigate the bug" });
     });
 
     it("carries no mode label for a replace-mode agent", () => {
-      const [entry] = listNavigableAgents([makeNavigable({ type: "Explore", description: "Find auth files" })], registry);
+      const [entry] = listNavigableAgents([makeNavigable({ type: "Explore", description: "Find auth files" })], registry, []);
       expect(entry.heading).toEqual({ name: "Explore", modeLabel: undefined, description: "Find auth files" });
     });
   });
 
-  it("orders live entries before snapshot ones", () => {
+  it("orders live entries before snapshot ones, and persisted runs last", () => {
     const live = makeNavigable({ id: "live-1", isSessionReady: () => true });
     const released = makeNavigable({ id: "released-1", isSessionReady: () => false, outputFile: "/tasks/x.jsonl" });
-    const kinds = listNavigableAgents([live, released], registry).map((e) => e.kind);
-    expect(kinds).toEqual(["live", "snapshot"]);
+    const persisted = persistedRun({ id: "earlier", outputFile: "/tasks/earlier.jsonl" });
+    const sources = listNavigableAgents([live, released], registry, [persisted]).map((e) =>
+      e.kind === "live" ? e.record.id : e.outputFile,
+    );
+    expect(sources).toEqual(["live-1", "/tasks/x.jsonl", "/tasks/earlier.jsonl"]);
+  });
+
+  describe("persisted runs", () => {
+    it("lists a persisted run with a transcript as a snapshot entry", () => {
+      const entries = listNavigableAgents([], registry, [persistedRun()]);
+      expect(entries).toEqual([
+        {
+          kind: "snapshot",
+          outputFile: "/tasks/earlier.jsonl",
+          heading: { name: "Agent", modeLabel: "twin", description: "Earlier task" },
+          label: "Agent (Earlier task) · 7 tools · completed · 3.0s · session released (snapshot)",
+        },
+      ]);
+    });
+
+    it("lists a run the manager still holds once, from the manager", () => {
+      const live = makeNavigable({ id: "earlier", isSessionReady: () => true });
+      const entries = listNavigableAgents([live], registry, [persistedRun({ id: "earlier" })]);
+      expect(entries.map((e) => e.kind)).toEqual(["live"]);
+    });
+
+    it("omits a persisted run that recorded no transcript", () => {
+      expect(listNavigableAgents([], registry, [persistedRun({ outputFile: undefined })])).toEqual([]);
+    });
   });
 });
+
+function persistedRun(overrides: Partial<PersistedRunSummary> = {}): PersistedRunSummary {
+  return {
+    id: "earlier",
+    type: "general-purpose",
+    description: "Earlier task",
+    status: "completed",
+    startedAt: 1000,
+    completedAt: 4000,
+    toolUses: 7,
+    outputFile: "/tasks/earlier.jsonl",
+    ...overrides,
+  };
+}
 
 describe("liveSource", () => {
   it("getMessages returns the record's agentMessages", () => {

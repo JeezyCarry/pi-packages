@@ -65,6 +65,7 @@ Load this skill when writing, debugging, or planning tests.
   Assert the positive (non-fallback) path against the same fixture builder first — a malformed fixture then fails loudly there — or assert a discriminating field the fallback cannot produce.
 - `toMatchObject` does not assert a key's **absence**: an expected `undefined` value requires the key to be present on the received object, so `toMatchObject({ flag: undefined })` fails when `flag` is missing.
   Use `toEqual` for a full-shape assertion, or assert a discriminating field the negative case cannot produce.
+  `toEqual` ignores `undefined`-valued keys too, so it cannot pin a key's absence; use `toStrictEqual` when the key set is the claim.
 - When proving a guard test is not vacuous, build the probe to match the guard's exact predicate.
   A near-miss probe (`void runRpcSession;` against a guard matching `runRpcSession(`) leaves the guard silent and looks like proof it is broken.
 - Before asserting, name both outcomes and confirm your assertion's value differs between them **under the fixture's defaults**.

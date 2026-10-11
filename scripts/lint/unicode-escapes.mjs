@@ -1,24 +1,29 @@
 #!/usr/bin/env node
-// Rejects literal Unicode escapes in the prose of markdown files.
+// Rejects literal Unicode escapes in the prose of markdown files and in the
+// comments of JavaScript and TypeScript files.
 //
 // A model's em-dash can reach a file as the six visible characters of its
 // escape rather than the character itself -- #859, #960, and #962 each
-// committed or nearly committed one. It is valid markdown, so rumdl passes it,
+// committed or nearly committed one, and #1033 wrote one into a TypeScript
+// comment. It is valid markdown and valid code, so rumdl and Biome pass it,
 // and it contains no control character, so invisible-characters.mjs passes it
 // too.
 //
 // Code is exempt: the documents that teach this rule quote the escape in
 // backticks on purpose, so the scan blanks inline code spans and fenced
-// blocks before it looks.
+// blocks before it looks. In a source file only the comments are prose --
+// a string literal spelling an escape is legitimate -- and a backtick quote
+// inside a comment is exempt too.
 //
 // Usage: node scripts/lint/unicode-escapes.mjs [--fix] [paths...]
 //
-// With no paths it enumerates the tracked markdown files itself. `--fix`
+// With no paths it enumerates the tracked markdown and code files itself. `--fix`
 // decodes each escape that spells a visible character and still fails on the
 // rest.
 
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 
 /**
@@ -31,15 +36,21 @@ import { fileURLToPath } from "node:url";
  * `column` counts code points rather than UTF-16 units, so an astral
  * character earlier on the line does not skew the position.
  *
+ * `maskProse` blanks whatever is not prose; it defaults to markdown's code
+ * spans and fenced blocks.
+ *
  * @param {string} text
+ * @param {(text: string) => string} [maskProse]
  * @returns {{line: number, column: number, token: string, replacement: string | null}[]}
  */
-export function findUnicodeEscapes(text) {
-  return escapeMatches(text).map(({ index, token, replacement }) => ({
-    ...position(text, index),
-    token,
-    replacement,
-  }));
+export function findUnicodeEscapes(text, maskProse = maskCode) {
+  return escapeMatches(text, maskProse).map(
+    ({ index, token, replacement }) => ({
+      ...position(text, index),
+      token,
+      replacement,
+    }),
+  );
 }
 
 /**
@@ -65,13 +76,14 @@ export function formatFinding(path, finding) {
  * `text` with every decodable escape replaced by the character it spells.
  *
  * A finding with no replacement is left exactly where it is, and so is
- * anything inside code.
+ * anything `maskProse` blanks.
  *
  * @param {string} text
+ * @param {(text: string) => string} [maskProse]
  * @returns {{text: string, decoded: number}}
  */
-export function repairUnicodeEscapes(text) {
-  const decodable = escapeMatches(text).filter(
+export function repairUnicodeEscapes(text, maskProse = maskCode) {
+  const decodable = escapeMatches(text, maskProse).filter(
     ({ replacement }) => replacement !== null,
   );
   let repaired = "";
@@ -91,6 +103,9 @@ export function repairUnicodeEscapes(text) {
  * over the rewritten files, so a finding that needs a hand repair still fails.
  * A file with nothing to decode is not rewritten.
  *
+ * A code file that does not parse is never rewritten, and the scan counts it
+ * as a failure: the gate cannot vouch for comments it could not find.
+ *
  * @param {{paths: string[], fix?: boolean}} request
  * @param {{readFile: (path: string) => Buffer, writeFile: (path: string, text: string) => void}} io
  * @returns {{lines: string[], exitCode: number}}
@@ -99,23 +114,58 @@ export function run({ paths, fix = false }, io) {
   const lines = [];
   if (fix) {
     for (const path of paths) {
-      const { text, decoded } = repairUnicodeEscapes(
-        io.readFile(path).toString("utf8"),
-      );
-      if (decoded === 0) continue;
-      io.writeFile(path, text);
+      let repair;
+      try {
+        repair = repairUnicodeEscapes(
+          io.readFile(path).toString("utf8"),
+          proseMaskFor(path),
+        );
+      } catch (error) {
+        if (error instanceof UnparseableSourceError) continue;
+        throw error;
+      }
+      if (repair.decoded === 0) continue;
+      io.writeFile(path, repair.text);
       lines.push(`decoded ${path}`);
     }
   }
-  let findings = 0;
+  let failures = 0;
   for (const path of paths) {
     const text = io.readFile(path).toString("utf8");
-    for (const finding of findUnicodeEscapes(text)) {
+    let findings;
+    try {
+      findings = findUnicodeEscapes(text, proseMaskFor(path));
+    } catch (error) {
+      if (!(error instanceof UnparseableSourceError)) throw error;
+      lines.push(
+        `${path}: does not parse as JavaScript or TypeScript; comments not scanned`,
+      );
+      failures += 1;
+      continue;
+    }
+    for (const finding of findings) {
       lines.push(formatFinding(path, finding));
-      findings += 1;
+      failures += 1;
     }
   }
-  return { lines, exitCode: findings === 0 ? 0 : 1 };
+  return { lines, exitCode: failures === 0 ? 0 : 1 };
+}
+
+/** Extensions whose prose is their comments. */
+const CODE_EXTENSIONS = [".ts", ".mts", ".cts", ".js", ".mjs", ".cjs"];
+
+/**
+ * The mask that leaves a file's prose visible: its comments for JavaScript
+ * and TypeScript, and markdown's text outside code for anything else.
+ *
+ * @param {string} path
+ * @returns {(text: string) => string}
+ */
+function proseMaskFor(path) {
+  if (CODE_EXTENSIONS.some((extension) => path.endsWith(extension))) {
+    return (text) => maskAllButComments(text, path);
+  }
+  return maskCode;
 }
 
 /**
@@ -278,6 +328,71 @@ function isAsciiPunctuation(character) {
 }
 
 /**
+ * `text` with everything outside its comments blanked to spaces, and the
+ * code spans inside those comments blanked too.
+ *
+ * The comments come from a real parser, so a string, template, or regex
+ * literal that spells a comment opener or an escape stays code. Offsets and
+ * line feeds are preserved, as in `maskCode`. Throws when `text` does not
+ * parse as the JavaScript or TypeScript its `path` names.
+ *
+ * @param {string} text
+ * @param {string} path
+ * @returns {string}
+ */
+export function maskAllButComments(text, path) {
+  const { ast } = parseSource(text, path);
+  let comments = blankOut(text);
+  for (const { range } of ast.comments) {
+    const [start, end] = range;
+    comments =
+      comments.slice(0, start) + text.slice(start, end) + comments.slice(end);
+  }
+  return maskCodeSpans(comments);
+}
+
+/** Thrown when a code file does not parse, so its comments are unknown. */
+export class UnparseableSourceError extends Error {
+  /** @param {string} path */
+  constructor(path) {
+    super(`${path} does not parse as JavaScript or TypeScript`);
+    this.name = "UnparseableSourceError";
+  }
+}
+
+/**
+ * @param {string} text
+ * @param {string} path
+ * @returns {{ast: {comments: {range: [number, number]}[]}}}
+ */
+function parseSource(text, path) {
+  try {
+    return typescriptParser().parseForESLint(text, {
+      comment: true,
+      range: true,
+      filePath: path,
+    });
+  } catch (error) {
+    if (error?.name !== "TSError") throw error;
+    throw new UnparseableSourceError(path);
+  }
+}
+
+/** @type {{parseForESLint: Function} | undefined} */
+let loadedParser;
+
+/**
+ * The `typescript-eslint` parser, loaded on first use so a markdown-only run
+ * never pays for it.
+ *
+ * @returns {{parseForESLint: Function}}
+ */
+function typescriptParser() {
+  loadedParser ??= createRequire(import.meta.url)("typescript-eslint").parser;
+  return loadedParser;
+}
+
+/**
  * An escape preceded by exactly one backslash -- `\\u2014` is CommonMark's
  * spelling of a literal backslash, and so of a deliberate literal escape --
  * in the four-digit or the braced form.
@@ -297,10 +412,11 @@ const INVISIBLE = /[\p{C}\p{Z}]/u;
  * Every escape and bare token in the prose of `text`, by UTF-16 offset.
  *
  * @param {string} text
+ * @param {(text: string) => string} maskProse
  * @returns {{index: number, token: string, replacement: string | null}[]}
  */
-function escapeMatches(text) {
-  const prose = maskCode(text);
+function escapeMatches(text, maskProse) {
+  const prose = maskProse(text);
   const matches = [];
   let consumedUntil = 0;
   for (const match of prose.matchAll(ESCAPE)) {
@@ -385,15 +501,19 @@ function hex(codePoint) {
 }
 
 /**
- * Every tracked markdown file that exists on disk.
+ * Every tracked markdown and code file that exists on disk.
  *
  * A path staged for deletion is still tracked, so the existence filter keeps
  * the scan from throwing on it.
  *
  * @returns {string[]}
  */
-function trackedMarkdown() {
-  const listing = execFileSync("git", ["ls-files", "-z", "--", "*.md"], {
+function trackedFiles() {
+  const patterns = [
+    "*.md",
+    ...CODE_EXTENSIONS.map((extension) => `*${extension}`),
+  ];
+  const listing = execFileSync("git", ["ls-files", "-z", "--", ...patterns], {
     maxBuffer: 64 * 1024 * 1024,
   }).toString("utf8");
   return listing.split("\0").filter((path) => path !== "" && existsSync(path));
@@ -427,7 +547,7 @@ function blankOut(text) {
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const { fix, paths } = parseArgs(process.argv.slice(2));
   const { lines, exitCode } = run(
-    { paths: paths.length > 0 ? paths : trackedMarkdown(), fix },
+    { paths: paths.length > 0 ? paths : trackedFiles(), fix },
     {
       readFile: readFileSync,
       writeFile: (path, text) => writeFileSync(path, text, "utf8"),

@@ -195,7 +195,6 @@ describe("renderGetResultLines", () => {
 	describe("status glyphs", () => {
 		const cases: ReadonlyArray<[SubagentStatus, string]> = [
 			["completed", "[success:✓]"],
-			["steered", "[warning:✓]"],
 			["stopped", "[dim:■]"],
 			["error", "[error:✗]"],
 			["aborted", "[error:✗]"],
@@ -207,6 +206,13 @@ describe("renderGetResultLines", () => {
 			const [first] = renderGetResultLines(makeDetails({ status }), "", false, theme);
 
 			expect(first.startsWith(expected)).toBe(true);
+		});
+
+		it("leads with the warning glyph for a completed run the harness warned", () => {
+			const details = makeDetails({ status: "completed", turnBudget: { maxTurns: 2, used: 3, phase: "warned" } });
+			const [first] = renderGetResultLines(details, "", false, theme);
+
+			expect(first.startsWith("[warning:\u2713]")).toBe(true);
 		});
 	});
 });

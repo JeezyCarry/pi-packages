@@ -29,6 +29,7 @@
 
 import type { ResumeRefusal } from "#src/lifecycle/subagent";
 import type { SubagentStatus } from "#src/lifecycle/subagent-state";
+import { type TurnBudget, wrappedUpAtTurnLimit } from "#src/lifecycle/turn-limits";
 
 /**
  * What a terminal status means, independent of how a carrier renders it.
@@ -43,17 +44,33 @@ import type { SubagentStatus } from "#src/lifecycle/subagent-state";
 interface StatusMeaning {
 	/** Sentence-initial label, e.g. "Wrapped up". */
 	label: string;
-	/** Why, without terminal punctuation, e.g. "reached turn limit". */
+	/** Why, without terminal punctuation, e.g. "after turn-budget warning". */
 	detail: string;
 }
 
 const STATUS_MEANINGS: Partial<Record<SubagentStatus, StatusMeaning>> = {
-	aborted: { label: "Aborted", detail: "max turns exceeded, output may be incomplete" },
-	steered: { label: "Wrapped up", detail: "reached turn limit" },
+	aborted: { label: "Aborted", detail: "turn limit reached, output may be incomplete" },
 	// "user request" rather than "stopped by user": the detail must stand on its
 	// own after the label, which both presentations already supply.
 	stopped: { label: "Stopped", detail: "user request" },
 };
+
+/** A run that finished on its own after the harness warned it about its turn limit. */
+const WRAPPED_UP: StatusMeaning = { label: "Wrapped up", detail: "after turn-budget warning" };
+
+/**
+ * Only what the status presentations read: the status, the error an error
+ * label names, and the budget that qualifies a completed run.
+ */
+export interface StatusOutcome {
+	status: SubagentStatus;
+	error?: string;
+	turnBudget?: TurnBudget;
+}
+
+function statusMeaning(outcome: StatusOutcome): StatusMeaning | undefined {
+	return wrappedUpAtTurnLimit(outcome) ? WRAPPED_UP : STATUS_MEANINGS[outcome.status];
+}
 
 /**
  * Why a resume is unavailable *for good*, worded as a subordinate clause.
@@ -75,24 +92,24 @@ const RESUME_REFUSAL_CLAUSES: Record<Exclude<ResumeRefusal, "still-running">, st
 };
 
 /**
- * Standalone label form, e.g. "Wrapped up (reached turn limit)".
+ * Standalone label form, e.g. "Wrapped up (after turn-budget warning)".
  *
  * An error reports its message instead: the status alone does not say what
  * went wrong.
  */
-export function renderStatusLabel(status: SubagentStatus, error?: string): string {
-	if (status === "error") return `Error: ${error ?? "unknown"}`;
-	const meaning = STATUS_MEANINGS[status];
+export function renderStatusLabel(outcome: StatusOutcome): string {
+	if (outcome.status === "error") return `Error: ${outcome.error ?? "unknown"}`;
+	const meaning = statusMeaning(outcome);
 	return meaning ? `${meaning.label} (${meaning.detail})` : "Done";
 }
 
 /**
- * Parenthetical suffix form, e.g. " (wrapped up — reached turn limit)", for a
+ * Parenthetical suffix form, e.g. " (wrapped up — after turn-budget warning)", for a
  * carrier appending to its own sentence. Empty when the status is unremarkable
  * or when the body already carries the explanation, as an error's does.
  */
-export function renderStatusNote(status: SubagentStatus): string {
-	const meaning = STATUS_MEANINGS[status];
+export function renderStatusNote(outcome: StatusOutcome): string {
+	const meaning = statusMeaning(outcome);
 	if (!meaning) return "";
 	return ` (${meaning.label.toLowerCase()} \u2014 ${meaning.detail})`;
 }

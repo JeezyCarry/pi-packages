@@ -15,6 +15,8 @@
  * extensions did or did not install.
  */
 
+import type { TurnBudget } from "#src/lifecycle/turn-limits";
+
 /** Emitted at the start of a child run, before the session is created. */
 export const SUBAGENT_CHILD_SPAWNING = "subagents:child:spawning";
 
@@ -36,7 +38,7 @@ export const SUBAGENT_CHILD_SESSION_CREATED = "subagents:child:session-created";
  */
 export const SUBAGENT_CHILD_BOUND = "subagents:child:bound";
 
-/** Emitted after the child's prompt resolves (normal, steered, or aborted). */
+/** Emitted after the child's prompt resolves, whether it finished or the harness stopped it. */
 export const SUBAGENT_CHILD_COMPLETED = "subagents:child:completed";
 
 /** Emitted in the run's `finally` — always fires, on success and error. */
@@ -67,10 +69,8 @@ export interface ChildBoundEvent {
 export interface ChildCompletedEvent {
   sessionDir: string;
   agentName: string;
-  /** True if the run was hard-aborted (max turns + grace exceeded). */
-  aborted: boolean;
-  /** True if the run was steered to wrap up (soft turn limit) but finished. */
-  steered: boolean;
+  /** The run's turn limit and its use; absent when no limit applied. */
+  turnBudget?: TurnBudget;
 }
 
 /** Payload for `subagents:child:disposed`. */

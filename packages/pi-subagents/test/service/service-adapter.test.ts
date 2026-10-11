@@ -35,12 +35,23 @@ describe("toSubagentRecord", () => {
       isBackground: true,
       result: "Found 3 stale TODOs",
       toolUses: 5,
-      turnCount: 1,
       startedAt: 1000,
       completedAt: 2000,
       lifetimeUsage: { input: 100, output: 200, cacheWrite: 50 },
       compactionCount: 1,
+      // The fixture never ran, so it has no session to continue.
+      resumeRefusal: "no-session",
     });
+  });
+
+  it("reports session-released once the retention sweep has freed the session", async () => {
+    const agent = createTestSubagent({ sessionReady: true });
+    await agent.releaseSession();
+    expect(toSubagentRecord(agent).resumeRefusal).toBe("session-released");
+  });
+
+  it("omits resumeRefusal when a resume would start", () => {
+    expect(toSubagentRecord(createTestSubagent({ sessionReady: true }))).not.toHaveProperty("resumeRefusal");
   });
 
   it("carries a declared question so a consumer can surface it as answerable", () => {
@@ -57,19 +68,19 @@ describe("toSubagentRecord", () => {
     expect(result.isBackground).toBe(false);
   });
 
-  it("reports the turns consumed so far", () => {
-    const result = toSubagentRecord(createTestSubagent({ turnCount: 4 }));
-    expect(result.turnCount).toBe(4);
+  it("reports turns only through the turn budget", () => {
+    const result = toSubagentRecord(createTestSubagent({ turnBudget: { maxTurns: 12, used: 4, phase: "within" } }));
+    expect(result.turnBudget).toEqual({ maxTurns: 12, used: 4, phase: "within" });
+    expect(result).not.toHaveProperty("turnCount");
+    expect(result).not.toHaveProperty("maxTurns");
   });
 
-  it("reports the turn ceiling and the transcript path when the agent has them", () => {
-    const record = createTestSubagent({ maxTurns: 12 });
+  it("reports the transcript path when the agent has one", () => {
+    const record = createTestSubagent();
     record.subagentSession = toSubagentSession(
       createSubagentSessionStub(createMockSession(), "/sessions/child.jsonl"),
     );
-    const result = toSubagentRecord(record);
-    expect(result.maxTurns).toBe(12);
-    expect(result.outputFile).toBe("/sessions/child.jsonl");
+    expect(toSubagentRecord(record).outputFile).toBe("/sessions/child.jsonl");
   });
 
   it("strips live objects and collaborators", () => {
@@ -134,6 +145,16 @@ describe("toSubagentRecord", () => {
     expect(agent.lifetimeUsage.input).toBe(100);
   });
 
+  it("copies the turn budget by value", () => {
+    const agent = createTestSubagent({ turnBudget: { maxTurns: 2, used: 3, phase: "warned" } });
+
+    const snapshot = toSubagentRecord(agent);
+    expect(snapshot.turnBudget).toEqual({ maxTurns: 2, used: 3, phase: "warned" });
+
+    snapshot.turnBudget!.used = 99;
+    expect(agent.turnBudget?.used).toBe(3);
+  });
+
   it("omits optional fields when undefined on the source", () => {
     const minimal = createTestSubagent({
       id: "min-1",
@@ -153,10 +174,10 @@ describe("toSubagentRecord", () => {
       status: "running",
       isBackground: true,
       toolUses: 0,
-      turnCount: 1,
       startedAt: 500,
       lifetimeUsage: { input: 0, output: 0, cacheWrite: 0 },
       compactionCount: 0,
+      resumeRefusal: "still-running",
     });
     expect(result).not.toHaveProperty("result");
     expect(result).not.toHaveProperty("error");
@@ -274,6 +295,19 @@ describe("SubagentsServiceAdapter — getRecord and listAgents", () => {
     // Verify serialization
     expect(list[0]).not.toHaveProperty("session");
     expect(list[1]).not.toHaveProperty("abortController");
+  });
+
+  it("gives each listed agent its own resume answer", async () => {
+    const resumable = createTestSubagent({ id: "r-1", sessionReady: true, startedAt: 2000 });
+    const released = createTestSubagent({ id: "x-1", sessionReady: true, startedAt: 1000 });
+    await released.releaseSession();
+
+    const [first, second] = createService([resumable, released]).listAgents();
+
+    expect(first.id).toBe("r-1");
+    expect(first).not.toHaveProperty("resumeRefusal");
+    expect(second.id).toBe("x-1");
+    expect(second.resumeRefusal).toBe("session-released");
   });
 });
 
@@ -614,11 +648,11 @@ describe("SubagentsServiceAdapter — resume", () => {
         isBackground: true,
         result: "Resumed output.",
         toolUses: 5,
-        turnCount: 1,
-        startedAt: 1000,
+          startedAt: 1000,
         completedAt: 2000,
         lifetimeUsage: { input: 100, output: 200, cacheWrite: 50 },
         compactionCount: 0,
+        resumeRefusal: "no-session",
       },
     });
   });

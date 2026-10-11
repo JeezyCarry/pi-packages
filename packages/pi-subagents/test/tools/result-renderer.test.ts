@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { SubagentStatus } from "#src/lifecycle/subagent-state";
+import type { TurnBudget } from "#src/lifecycle/turn-limits";
 import {
 	renderAgentResult,
 	renderBackground,
@@ -18,6 +19,8 @@ function makeTheme(): Theme {
 		bold: (text: string) => `**${text}**`,
 	};
 }
+
+const WARNED: TurnBudget = { maxTurns: 2, used: 3, phase: "warned" };
 
 function makeDetails(overrides: Partial<AgentDetails> = {}): AgentDetails {
 	return {
@@ -52,23 +55,18 @@ describe("renderStats", () => {
 		expect(result).toContain("[dim:inherit context]");
 	});
 
-	it("includes turn count with max turns", () => {
-		const details = makeDetails({ turnCount: 5, maxTurns: 30 });
+	it("includes the turns used against the ceiling", () => {
+		const details = makeDetails({ turnBudget: { maxTurns: 30, used: 5, phase: "within" } });
 		expect(renderStats(details, theme)).toContain("[dim:↻5≤30]");
 	});
 
-	it("includes turn count without max turns", () => {
-		const details = makeDetails({ turnCount: 5 });
+	it("includes an unlimited run's turns without a ceiling", () => {
+		const details = makeDetails({ turnBudget: { used: 5, phase: "within" } });
 		expect(renderStats(details, theme)).toContain("[dim:↻5]");
 	});
 
-	it("excludes turn count when turnCount is 0", () => {
-		const details = makeDetails({ turnCount: 0 });
-		expect(renderStats(details, theme)).not.toContain("↻");
-	});
-
-	it("excludes turn count when turnCount is undefined", () => {
-		const details = makeDetails({ turnCount: undefined });
+	it("excludes turns when the run has no turn budget yet", () => {
+		const details = makeDetails({ turnBudget: undefined });
 		expect(renderStats(details, theme)).not.toContain("↻");
 	});
 
@@ -157,8 +155,8 @@ describe("renderCompleted", () => {
 		expect(renderCompleted(details, "", false, theme)).toContain("[success:\u2713]");
 	});
 
-	it("uses warning icon for steered status", () => {
-		const details = makeDetails({ status: "steered", durationMs: 2000 });
+	it("uses warning icon for a completed run the harness warned", () => {
+		const details = makeDetails({ status: "completed", durationMs: 2000, turnBudget: WARNED });
 		expect(renderCompleted(details, "", false, theme)).toContain("[warning:\u2713]");
 	});
 
@@ -172,10 +170,10 @@ describe("renderCompleted", () => {
 		expect(renderCompleted(details, "", false, theme)).toContain("[dim:  \u23BF  Done]");
 	});
 
-	it("collapsed view shows 'Wrapped up (turn limit)' for steered", () => {
-		const details = makeDetails({ status: "steered", durationMs: 2000 });
+	it("collapsed view shows 'Wrapped up (budget warning)' for a completed run the harness warned", () => {
+		const details = makeDetails({ status: "completed", durationMs: 2000, turnBudget: WARNED });
 		expect(renderCompleted(details, "", false, theme)).toContain(
-			"[dim:  \u23BF  Wrapped up (turn limit)]",
+			"[dim:  \u23BF  Wrapped up (budget warning)]",
 		);
 	});
 
@@ -244,7 +242,7 @@ describe("renderFailed", () => {
 	it("shows aborted message with warning color for aborted status", () => {
 		const details = makeDetails({ status: "aborted" });
 		expect(renderFailed(details, theme)).toContain(
-			"[warning:  \u23BF  Aborted (max turns exceeded)]",
+			"[warning:  \u23BF  Aborted (turn limit reached)]",
 		);
 	});
 });
@@ -274,8 +272,8 @@ describe("renderAgentResult", () => {
 		expect(renderAgentResult(details, "", false, false, theme)).toContain("[success:\u2713]");
 	});
 
-	it("dispatches to renderCompleted for steered status", () => {
-		const details = makeDetails({ status: "steered", durationMs: 1000 });
+	it("dispatches to renderCompleted for a completed run the harness warned", () => {
+		const details = makeDetails({ status: "completed", durationMs: 1000, turnBudget: WARNED });
 		expect(renderAgentResult(details, "", false, false, theme)).toContain("[warning:\u2713]");
 	});
 
@@ -292,7 +290,7 @@ describe("renderAgentResult", () => {
 	it("dispatches to renderFailed for aborted status", () => {
 		const details = makeDetails({ status: "aborted" });
 		expect(renderAgentResult(details, "", false, false, theme)).toContain(
-			"[warning:  \u23BF  Aborted (max turns exceeded)]",
+			"[warning:  \u23BF  Aborted (turn limit reached)]",
 		);
 	});
 });
@@ -302,7 +300,6 @@ describe("renderStatusIcon", () => {
 
 	const cases: ReadonlyArray<[SubagentStatus, string]> = [
 		["completed", "[success:\u2713]"],
-		["steered", "[warning:\u2713]"],
 		["stopped", "[dim:\u25A0]"],
 		["error", "[error:\u2717]"],
 		["aborted", "[error:\u2717]"],
@@ -316,6 +313,6 @@ describe("renderStatusIcon", () => {
 
 	it("gives every status a distinct rendering except the two failure statuses", () => {
 		const rendered = cases.map(([status]) => renderStatusIcon(status, theme));
-		expect(new Set(rendered).size).toBe(6);
+		expect(new Set(rendered).size).toBe(5);
 	});
 });

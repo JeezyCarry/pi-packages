@@ -3,14 +3,13 @@ import { createTestSubagent } from "./make-subagent";
 
 describe("createTestSubagent", () => {
 	describe("live-activity shorthands", () => {
-		it("defaults turnCount to 1", () => {
-			const record = createTestSubagent();
-			expect(record.turnCount).toBe(1);
+		it("has no turn budget by default", () => {
+			expect(createTestSubagent().turnBudget).toBeUndefined();
 		});
 
-		it("sets turnCount to the requested value", () => {
-			const record = createTestSubagent({ turnCount: 4 });
-			expect(record.turnCount).toBe(4);
+		it("seeds a turn budget", () => {
+			const record = createTestSubagent({ turnBudget: { maxTurns: 10, used: 4, phase: "within" } });
+			expect(record.turnBudget).toEqual({ maxTurns: 10, used: 4, phase: "within" });
 		});
 
 		it("defaults activeTools to an empty map", () => {
@@ -34,15 +33,6 @@ describe("createTestSubagent", () => {
 			expect(record.responseText).toBe("thinking…");
 		});
 
-		it("defaults maxTurns to undefined", () => {
-			const record = createTestSubagent();
-			expect(record.maxTurns).toBeUndefined();
-		});
-
-		it("threads maxTurns into the stub execution", () => {
-			const record = createTestSubagent({ maxTurns: 10 });
-			expect(record.maxTurns).toBe(10);
-		});
 	});
 
 	describe("session readiness", () => {

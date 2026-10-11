@@ -5,6 +5,8 @@
  * while dropping noise (thinking content, image data, token usage, tool result bodies).
  */
 
+import { TurnLedger } from "./turn-ledger.js";
+
 /**
  * Minimal structural supertype for session entries.
  * Accepts SDK SessionEntry[] without index-signature conflicts.
@@ -108,10 +110,7 @@ function buildToolResultMap(
 ): Map<string, ToolResultInfo> {
   const map = new Map<string, ToolResultInfo>();
   for (const entry of entries) {
-    if (entry.type !== "message") continue;
-    const msg = (entry as unknown as Record<string, unknown>).message as
-      | Record<string, unknown>
-      | undefined;
+    const msg = messageOf(entry);
     if (msg?.role !== "toolResult") continue;
     const toolCallId = typeof msg.toolCallId === "string" ? msg.toolCallId : "";
     if (!toolCallId) continue;
@@ -127,20 +126,38 @@ function buildToolResultMap(
 function collectAssistantToolCallIds(entries: TranscriptEntry[]): Set<string> {
   const ids = new Set<string>();
   for (const entry of entries) {
-    if (entry.type !== "message") continue;
-    const msg = (entry as unknown as Record<string, unknown>).message as
-      | Record<string, unknown>
-      | undefined;
+    const msg = messageOf(entry);
     if (msg?.role !== "assistant") continue;
-    const content = msg.content;
-    if (!Array.isArray(content)) continue;
-    for (const part of content) {
-      if (typeof part !== "object" || part === null) continue;
-      const p = part as Record<string, unknown>;
-      if (p.type === "toolCall" && typeof p.id === "string") {
-        ids.add(p.id);
-      }
-    }
+    for (const id of toolCallIdsOf(msg)) ids.add(id);
+  }
+  return ids;
+}
+
+/** The message a `message` entry carries, or `undefined` for any other entry. */
+function messageOf(
+  entry: TranscriptEntry,
+): Record<string, unknown> | undefined {
+  if (entry.type !== "message") return undefined;
+  const message = (entry as unknown as Record<string, unknown>).message;
+  return typeof message === "object" && message !== null
+    ? (message as Record<string, unknown>)
+    : undefined;
+}
+
+/** An entry's `id`, unguarded: the ledger records only string ids. */
+function idOf(entry: TranscriptEntry): unknown {
+  return (entry as unknown as Record<string, unknown>).id;
+}
+
+/** The ids of the `toolCall` parts in a message's content array. */
+function toolCallIdsOf(message: Record<string, unknown>): string[] {
+  const content = message.content;
+  if (!Array.isArray(content)) return [];
+  const ids: string[] = [];
+  for (const part of content) {
+    if (typeof part !== "object" || part === null) continue;
+    const p = part as Record<string, unknown>;
+    if (p.type === "toolCall" && typeof p.id === "string") ids.push(p.id);
   }
   return ids;
 }
@@ -186,8 +203,14 @@ function formatAssistantMessage(
 
 const BRANCH_SUMMARY_SNIPPET_LENGTH = 100;
 
-/** Format a non-message session entry (compaction, model change, etc.). */
-function formatMetadataEntry(entry: TranscriptEntry): string | null {
+/**
+ * Format a non-message session entry (compaction, model change, etc.).
+ * `ledger` names a context edit's target in transcript terms.
+ */
+function formatMetadataEntry(
+  entry: TranscriptEntry,
+  ledger: TurnLedger,
+): string | null {
   // Cast once to access all non-type fields through runtime guards.
   const e = entry as unknown as Record<string, unknown>;
   switch (entry.type) {
@@ -219,10 +242,26 @@ function formatMetadataEntry(entry: TranscriptEntry): string | null {
         summary.length > BRANCH_SUMMARY_SNIPPET_LENGTH ? "..." : "";
       return `[branch] ${snippet}${ellipsis}`;
     }
+    case "context_edit":
+      return formatContextEdit(e, ledger);
     default:
-      // custom, label, custom_message: omitted
+      // custom, label, custom_message, usage: omitted
       return null;
   }
+}
+
+/**
+ * Format a context edit: which earlier entry it changed, and whether that
+ * entry was dropped from model context (`replacement: null`) or rewritten.
+ */
+function formatContextEdit(
+  edit: Record<string, unknown>,
+  ledger: TurnLedger,
+): string {
+  const targetId = typeof edit.targetId === "string" ? edit.targetId : "";
+  const effect =
+    edit.replacement === null ? "omitted from context" : "replaced in context";
+  return `[context edit] ${ledger.describe(targetId)} ${effect}`;
 }
 
 /**
@@ -245,6 +284,85 @@ function formatBranchMarker(marker: Record<string, unknown>): string | null {
     default:
       return null;
   }
+}
+
+/**
+ * Format the leading system message as counts: its instruction text, sections,
+ * and tools are the whole prompt, which no reader wants verbatim.
+ */
+function formatSystemPrompt(message: Record<string, unknown>): string {
+  const { instructionChars, sections, toolsAdded } = readSystemMessage(message);
+  const counts = [
+    instructionChars > 0 ? `${instructionChars} chars` : "",
+    countOf(sections.length, "section"),
+    countOf(toolsAdded.length, "tool"),
+  ].filter(Boolean);
+  return `[system] prompt: ${counts.length > 0 ? counts.join(", ") : "empty"}`;
+}
+
+/** Format a later system message by naming what it changes. */
+function formatSystemUpdate(message: Record<string, unknown>): string {
+  const {
+    instructionChars,
+    sections,
+    sectionsRemoved,
+    toolsAdded,
+    toolsRemoved,
+  } = readSystemMessage(message);
+  const clauses = [
+    instructionChars > 0 ? `instructions: ${instructionChars} chars` : "",
+    namedClause("sections", sections),
+    namedClause("sections removed", sectionsRemoved),
+    namedClause("tools added", toolsAdded),
+    namedClause("tools removed", toolsRemoved),
+  ].filter(Boolean);
+  return `[system] update \u2014 ${clauses.length > 0 ? clauses.join("; ") : "no changes"}`;
+}
+
+interface SystemMessageSummary {
+  instructionChars: number;
+  /** Sections set by this message. */
+  sections: string[];
+  /** Sections this message removes (`null`-valued). */
+  sectionsRemoved: string[];
+  toolsAdded: string[];
+  toolsRemoved: string[];
+}
+
+function readSystemMessage(
+  message: Record<string, unknown>,
+): SystemMessageSummary {
+  const rawSections =
+    typeof message.sections === "object" && message.sections !== null
+      ? Object.entries(message.sections as Record<string, unknown>)
+      : [];
+  return {
+    instructionChars: extractTextContent(message.content).length,
+    sections: rawSections.filter(([, v]) => v !== null).map(([k]) => k),
+    sectionsRemoved: rawSections.filter(([, v]) => v === null).map(([k]) => k),
+    toolsAdded: toolNamesOf(message.toolsAdded),
+    toolsRemoved: toolNamesOf(message.toolsRemoved),
+  };
+}
+
+function toolNamesOf(tools: unknown): string[] {
+  if (!Array.isArray(tools)) return [];
+  return tools
+    .map((tool) =>
+      typeof tool === "object" && tool !== null
+        ? (tool as Record<string, unknown>).name
+        : undefined,
+    )
+    .filter((name): name is string => typeof name === "string");
+}
+
+function countOf(count: number, noun: string): string {
+  if (count === 0) return "";
+  return count === 1 ? `1 ${noun}` : `${count} ${noun}s`;
+}
+
+function namedClause(label: string, names: string[]): string {
+  return names.length > 0 ? `${label}: ${names.join(", ")}` : "";
 }
 
 /** Format a bashExecution message entry (command + exit code, no output). */
@@ -274,40 +392,54 @@ export function formatTranscript(
   const assistantToolCallIds = collectAssistantToolCallIds(entries);
 
   const parts: string[] = [];
-  let turnNum = 0;
+  const ledger = new TurnLedger();
+  // The first system message is the prompt; later ones update it.
+  let promptSeen = false;
 
   for (const entry of entries) {
     if (entry.type !== "message") {
-      const formatted = formatMetadataEntry(entry);
+      if (entry.type === "custom_message") {
+        ledger.recordCustomMessage(idOf(entry));
+      }
+      const formatted = formatMetadataEntry(entry, ledger);
       if (formatted !== null) parts.push(formatted);
       continue;
     }
 
-    const message = (entry as unknown as Record<string, unknown>).message as
-      | Record<string, unknown>
-      | undefined;
-    if (!message || typeof message !== "object") continue;
+    const message = messageOf(entry);
+    if (!message) continue;
 
     const role = message.role;
+    const entryId = idOf(entry);
 
     if (role === "user") {
-      turnNum++;
-      parts.push(formatUserMessage(message, turnNum, options));
+      const turn = ledger.numberTurn(entryId, "user", []);
+      parts.push(formatUserMessage(message, turn, options));
     } else if (role === "assistant") {
-      turnNum++;
-      parts.push(formatAssistantMessage(message, turnNum, resultMap));
+      const turn = ledger.numberTurn(
+        entryId,
+        "assistant",
+        toolCallIdsOf(message),
+      );
+      parts.push(formatAssistantMessage(message, turn, resultMap));
     } else if (role === "toolResult") {
       const toolCallId =
         typeof message.toolCallId === "string" ? message.toolCallId : "";
+      const toolName =
+        typeof message.toolName === "string" ? message.toolName : "unknown";
+      ledger.recordToolResult(entryId, toolCallId, toolName);
       // Render only orphan results (not folded into an assistant message)
       if (!assistantToolCallIds.has(toolCallId)) {
-        const toolName =
-          typeof message.toolName === "string" ? message.toolName : "unknown";
         const status = message.isError === true ? "error" : "completed";
         parts.push(`  [result] ${toolName} \u2192 ${status}`);
       }
     } else if (role === "bashExecution") {
       parts.push(formatBashMessage(message));
+    } else if (role === "system") {
+      parts.push(
+        promptSeen ? formatSystemUpdate(message) : formatSystemPrompt(message),
+      );
+      promptSeen = true;
     }
     // custom, compactionSummary, branchSummary message roles: omitted
   }

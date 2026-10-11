@@ -2,6 +2,7 @@
  * Shared gate-level test fixtures for gate descriptor and runner tests.
  */
 import { vi } from "vitest";
+import type { AccessIntent } from "#src/access-intent/access-intent";
 import type { AskEscalator } from "#src/authority/authorizer-selection";
 import type { ShellToolsConfig } from "#src/config/config-schema";
 import type { SkillPromptEntry } from "#src/exposure/skill-prompt-sanitizer";
@@ -13,6 +14,7 @@ import type { ToolCallContext } from "#src/handlers/gates/types";
 import type { DecisionReporter } from "#src/logging/decision-reporter";
 import { pathFlavorForPlatform } from "#src/path/path-flavor";
 import { PathNormalizer } from "#src/path/path-normalizer";
+import type { InfrastructureReadScope } from "#src/path/pi-infrastructure-read";
 import type { ScopedPermissionResolver } from "#src/policy/permission-resolver";
 import type { SessionApprovalRecorder } from "#src/session/session-approval-recorder";
 import type { ToolPreviewFormatterOptions } from "#src/tool-input/tool-preview-formatter";
@@ -23,6 +25,31 @@ import {
   makeGatePromptDetails,
   makePromptPayload,
 } from "./prompt-details-fixtures";
+
+/**
+ * The bash command an intent asks about, or `undefined` for any other intent.
+ *
+ * Mock resolvers read the command through this one helper so a change to how a
+ * gate spells a bash intent edits one reader rather than every mock.
+ */
+export function bashCommandOf(intent: AccessIntent): string | undefined {
+  switch (intent.kind) {
+    case "tool":
+      return intent.surface === "bash"
+        ? ((intent.input as { command?: string }).command ?? "")
+        : undefined;
+    case "bash-command":
+      return intent.command;
+    case "access-path":
+      return undefined;
+    default:
+      return assertNever(intent);
+  }
+}
+
+function assertNever(value: never): never {
+  throw new Error(`unhandled intent: ${JSON.stringify(value)}`);
+}
 
 /**
  * Permission resolver mock with an optional default check result.
@@ -207,18 +234,26 @@ export function makePathDispatchResolver(
 ) {
   const resolve = vi.fn<ScopedPermissionResolver["resolve"]>();
   resolve.mockImplementation((intent) => {
-    if (intent.kind === "tool") {
-      const path = (intent.input as Record<string, unknown>).path;
-      if (typeof path === "string" && path in byPath) {
-        return byPath[path];
+    switch (intent.kind) {
+      case "tool": {
+        const path = (intent.input as Record<string, unknown>).path;
+        if (typeof path === "string" && path in byPath) {
+          return byPath[path];
+        }
+        return defaultResult;
       }
-      return defaultResult;
+      case "bash-command":
+        return defaultResult;
+      case "access-path": {
+        const values = intent.path.matchValues();
+        for (const value of values) {
+          if (value in byPath) return byPath[value];
+        }
+        return defaultResult;
+      }
+      default:
+        return assertNever(intent);
     }
-    const values = intent.path.matchValues();
-    for (const value of values) {
-      if (value in byPath) return byPath[value];
-    }
-    return defaultResult;
   });
   return { resolve };
 }
@@ -252,7 +287,7 @@ export function makeGateCheckResult(
 export function makeGateInputs(
   overrides: {
     getActiveSkillEntries?: () => SkillPromptEntry[];
-    getInfrastructureReadDirs?: () => string[];
+    getInfrastructureReadScope?: () => InfrastructureReadScope;
     getToolPreviewLimits?: () => ToolPreviewFormatterOptions;
     getPathNormalizer?: () => PathNormalizer;
     getShellToolAliases?: () => ShellToolsConfig | undefined;
@@ -262,8 +297,12 @@ export function makeGateInputs(
     getActiveSkillEntries:
       overrides.getActiveSkillEntries ??
       vi.fn<() => SkillPromptEntry[]>(() => []),
-    getInfrastructureReadDirs:
-      overrides.getInfrastructureReadDirs ?? vi.fn<() => string[]>(() => []),
+    getInfrastructureReadScope:
+      overrides.getInfrastructureReadScope ??
+      vi.fn<() => InfrastructureReadScope>(() => ({
+        dirs: [],
+        excludedDirs: [],
+      })),
     getToolPreviewLimits:
       overrides.getToolPreviewLimits ??
       vi.fn<() => ToolPreviewFormatterOptions>(() => ({

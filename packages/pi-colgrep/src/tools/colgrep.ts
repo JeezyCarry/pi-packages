@@ -142,7 +142,7 @@ export function registerColGrep(
     renderResult(result, options, theme, context) {
       const text =
         (context.lastComponent as Text | undefined) ?? new Text("", 0, 0);
-      text.setText(formatResult(result, options, theme));
+      text.setText(formatResult(result, options, theme, context.isError));
       return text;
     },
     async execute(
@@ -181,12 +181,18 @@ function formatResult(
   result: unknown,
   options: { expanded: boolean },
   theme: Theme,
+  isError: boolean,
 ): string {
   const r = result as AnyToolResult;
   const details = r.details;
   const hitCount = details?.hitCount ?? 0;
   const outputText =
     r.content[0]?.type === "text" ? (r.content[0].text ?? "") : "";
+
+  if (!options.expanded && isError) {
+    const firstLine = outputText.split("\n")[0] ?? "";
+    return `${theme.fg("error", "✗")} ${theme.fg("error", firstLine)}`;
+  }
 
   if (!options.expanded) {
     const icon = theme.fg("success", "✓");

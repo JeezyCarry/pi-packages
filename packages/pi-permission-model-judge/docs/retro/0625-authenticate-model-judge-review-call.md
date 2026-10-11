@@ -99,8 +99,7 @@ Triggered the judge via a `read` on a doubled-package typo path; the new `model_
 
 ### Session summary
 
-## 625 ran the full multi-stage arc: plan → TDD (3 cycles, +3 tests) → an inconclusive dogfood → a deliberate hold to build observability (#626) first → confirmed verification via the new decision trail → ship
-
+#625 ran the full multi-stage arc: plan → TDD (3 cycles, +3 tests) → an inconclusive dogfood → a deliberate hold to build observability (#626) first → confirmed verification via the new decision trail → ship.
 The auth fix is released (it rode `pi-permission-model-judge` v1.0.2, cut during #626's work); the `/ship-issue` run reconciled that, closed #625 and #626, and merged the v1.1.0 release-please PR for #626's model-judge half.
 Verification also surfaced a distinct downstream defect (`parse-failed`), filed as #628.
 
@@ -116,25 +115,25 @@ Verification also surfaced a distinct downstream defect (`parse-failed`), filed 
   #625's `fix:` commits had already been released in v1.0.2 (a release cut during #626's development), yet the issue was still open.
   The package-scoped tag anchoring (`pi-permission-model-judge-v*`) plus the stacked-release check detected "already released," closed #625 against its real version (v1.0.2), and separately closed #626 as stacked work — no fabricated version, no double-release.
 
-##### What caused friction (agent side)
+#### What caused friction (agent side)
 
 - `missing-context` — the first dogfood triggers used `bash cat <typo-path>` and misread a `read` `ENOENT` as "not gated," before learning from the review log that the judge only sees `details.path ?? details.value`; a `bash` ask carries its path in `accessIntent.matchValues`, invisible to the judge, so only file tools (`read`/`edit`/`write`) can trigger it.
   Impact: a handful of wasted trigger attempts and log spelunking — but largely inherent investigation (the opacity that motivated #626 was real), so little true rework.
 - `other` (mental-model gap) — the verification stage framed the plan as "#625 ships now, batched with #626 in this release," but #625's commits were already released in v1.0.2; holding the **issue** open never held its **commits** from release.
   Impact: one mildly-inaccurate retro note; zero rework, since `/ship-issue` reconciled the actual state.
 
-##### What caused friction (user side)
+#### What caused friction (user side)
 
 - Minimal — the operator drove the two pivotal decisions (hold-for-observability, and the forced-tool-call direction for #628) crisply through the `ask_user` gates.
   One small opportunity: the "restart Pi to reload `./src/index.ts`" requirement surfaced only after a denied trigger attempt; flagging it before the first trigger would have saved a round-trip.
 
-##### Product gap noted (candidate future issue)
+#### Product gap noted (candidate future issue)
 
 - The judge cannot review a typo path embedded in a `bash` command — `pathOf` reads `details.path ?? details.value`, but `bash` asks place the external path in `accessIntent.matchValues`.
   So `bash`-surfaced typo paths silently bypass the judge.
   Worth a dedicated issue (widen `pathOf` to consult `accessIntent`), separate from #628 — filed as #630.
 
-#### Diagnostic details
+### Diagnostic details
 
 - **Model-performance correlation** — the main session moved `opus-4-8` → `sonnet-5` → `opus-4-8`; the `tidy-first-assessor` and `pre-completion-reviewer` subagents ran on their configured models over appropriate read-only/review tasks.
   No reasoning-weak-on-judgment or high-cost-on-mechanical mismatch.

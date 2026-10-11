@@ -11,6 +11,7 @@ import {
 	isActiveStatus,
 	type SubagentStatus,
 } from "#src/lifecycle/subagent-state";
+import { type TurnBudget, wrappedUpAtTurnLimit } from "#src/lifecycle/turn-limits";
 import type { LifetimeUsage } from "#src/lifecycle/usage";
 import { getLifetimeTotal } from "#src/lifecycle/usage";
 import type { SubagentType } from "#src/types";
@@ -19,7 +20,7 @@ import {
 	formatModel,
 	formatMs,
 	formatSessionTokens,
-	formatTurns,
+	formatTurnBudget,
 	getDisplayName,
 	getPromptModeLabel,
 	type ModelIdentity,
@@ -42,8 +43,8 @@ export interface WidgetAgent {
 	readonly lifetimeUsage?: Readonly<LifetimeUsage>;
 	readonly compactionCount: number;
 	// Live activity (folded from the former WidgetActivity — precomputed by AgentWidget)
-	readonly turnCount: number;
-	readonly maxTurns?: number;
+	/** The run's turn budget; absent until its turn loop starts. */
+	readonly turnBudget?: TurnBudget;
 	readonly activeTools: ReadonlyMap<string, string>;
 	readonly responseText: string;
 	/** Context-window utilisation (0–100), or null when unavailable. */
@@ -66,12 +67,12 @@ export function renderFinishedLine(
 
 	let icon: string;
 	let statusText: string;
-	if (agent.status === "completed") {
+	if (wrappedUpAtTurnLimit(agent)) {
+		icon = theme.fg("warning", GLYPHS.success);
+		statusText = theme.fg("warning", " (budget warning)");
+	} else if (agent.status === "completed") {
 		icon = theme.fg("success", GLYPHS.success);
 		statusText = "";
-	} else if (agent.status === "steered") {
-		icon = theme.fg("warning", GLYPHS.success);
-		statusText = theme.fg("warning", " (turn limit)");
 	} else if (agent.status === "stopped") {
 		icon = theme.fg("dim", GLYPHS.stopped);
 		statusText = theme.fg("dim", " stopped");
@@ -86,7 +87,7 @@ export function renderFinishedLine(
 	}
 
 	const parts: string[] = [];
-	parts.push(formatTurns(agent.turnCount, agent.maxTurns));
+	if (agent.turnBudget) parts.push(formatTurnBudget(agent.turnBudget));
 	if (agent.toolUses > 0) parts.push(`${agent.toolUses} tool use${agent.toolUses === 1 ? "" : "s"}`);
 	parts.push(duration);
 
@@ -110,7 +111,7 @@ export function renderRunningLines(
 	const tokenText = tokens > 0 ? formatSessionTokens(tokens, agent.contextPercent, theme, agent.compactionCount) : "";
 
 	const parts: string[] = [];
-	parts.push(formatTurns(agent.turnCount, agent.maxTurns));
+	if (agent.turnBudget) parts.push(renderRunningTurns(agent.turnBudget, theme));
 	if (agent.toolUses > 0) parts.push(`${agent.toolUses} tool use${agent.toolUses === 1 ? "" : "s"}`);
 	if (tokenText) parts.push(tokenText);
 	parts.push(elapsed);
@@ -123,6 +124,12 @@ export function renderRunningLines(
 	const activityLine = theme.fg("dim", `  ${GLYPHS.subLine}  ${activityText}`);
 
 	return [header, activityLine];
+}
+
+/** A running agent's turns, in the warning color once the harness has warned it about its budget. */
+function renderRunningTurns(budget: TurnBudget, theme: Theme): string {
+	const turns = formatTurnBudget(budget);
+	return budget.phase === "warned" ? theme.fg("warning", turns) : turns;
 }
 
 /** ` [provider/id]` after the agent's name, or nothing while the model is unknown. */
@@ -228,7 +235,7 @@ function assembleWithinBudget(heading: string, sections: WidgetSections): string
 	for (const pair of runningLines) lines.push(...pair);
 	if (queuedLine) lines.push(queuedLine);
 
-	// Fix last connector: swap \u251C\u2500 \u2192 \u2514\u2500.
+	// Fix last connector: swap ├─ → └─.
 	if (lines.length > 1) {
 		const last = lines.length - 1;
 		lines[last] = lines[last].replace("\u251C\u2500", "\u2514\u2500");

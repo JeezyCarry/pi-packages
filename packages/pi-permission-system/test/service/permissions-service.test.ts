@@ -23,10 +23,14 @@ import { makeCheckResult } from "#test/helpers/handler-fixtures";
 const realpathSync = vi.hoisted(() =>
   vi.fn<(path: string) => string>((p) => p),
 );
-vi.mock("node:fs", () => ({
-  realpathSync,
-  default: { realpathSync },
-}));
+vi.mock("node:fs", async () => {
+  const actual = await vi.importActual<typeof import("node:fs")>("node:fs");
+  return {
+    ...actual,
+    realpathSync,
+    default: { ...actual, realpathSync },
+  };
+});
 
 // Mock the advisory bash resolver so the service test asserts delegation; the
 // decomposition behavior itself is covered in bash-advisory-check.test.ts.
@@ -150,7 +154,7 @@ describe("checkPermission", () => {
     });
   });
 
-  it("routes a bash query through the advisory decomposition resolver", () => {
+  it("routes a bash query through the advisory decomposition resolver against the session's normalizer", () => {
     const { service, resolver } = makeService();
     const expected = makeCheckResult({ state: "deny", toolName: "bash" });
     resolveBashAdvisoryCheck.mockReturnValue(expected);
@@ -163,6 +167,7 @@ describe("checkPermission", () => {
       "cd /repo && npm install x",
       "my-agent",
       resolver,
+      normalizer,
     );
     expect(result).toBe(expected);
   });
@@ -174,6 +179,7 @@ describe("checkPermission", () => {
       "",
       undefined,
       resolver,
+      normalizer,
     );
   });
 

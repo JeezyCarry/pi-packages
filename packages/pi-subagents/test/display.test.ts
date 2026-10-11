@@ -1,10 +1,23 @@
-import { describe, expect, it } from "vitest";
+import type { ThemeColor } from "@earendil-works/pi-coding-agent";
+import { describe, expect, expectTypeOf, it } from "vitest";
 import { AgentTypeRegistry } from "#src/config/agent-types";
 import type { AgentConfig } from "#src/types";
-import { formatSessionTokens, getDisplayName, getPromptModeLabel, modelLabel } from "#src/ui/display";
+import {
+  formatSessionTokens,
+  getDisplayName,
+  getPromptModeLabel,
+  modelLabel,
+  type Theme,
+} from "#src/ui/display";
 import { makeModel } from "#test/helpers/make-model";
 
 const testRegistry = new AgentTypeRegistry(() => new Map());
+
+describe("Theme", () => {
+  it("accepts only Pi theme color names", () => {
+    expectTypeOf<Parameters<Theme["fg"]>[0]>().toEqualTypeOf<ThemeColor>();
+  });
+});
 
 describe("getDisplayName", () => {
   it("returns displayName when set", () => {

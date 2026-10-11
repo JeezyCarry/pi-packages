@@ -366,13 +366,13 @@ Omitting `"*"` defaults to `"ask"` (least privilege).
 Any registered tool name can be a surface key.
 A string value is a catch-all for that surface.
 
-| Surface example                               | Description                         |
-| --------------------------------------------- | ----------------------------------- |
-| `read`, `write`, `edit`, `grep`, `find`, `ls` | Canonical Pi built-in file tools    |
-| `bash`                                        | Shell command execution             |
-| `mcp`                                         | Registered MCP proxy tool           |
-| `task`                                        | Delegation tool                     |
-| `third_party_tool`                            | Any other registered extension tool |
+| Surface example                               | Description                                                 |
+| --------------------------------------------- | ----------------------------------------------------------- |
+| `read`, `write`, `edit`, `grep`, `find`, `ls` | Canonical Pi built-in file tools                            |
+| `bash`                                        | Shell command execution                                     |
+| `mcp`                                         | MCP calls: Pi's built-in MCP tools and the `mcp` proxy tool |
+| `task`                                        | Delegation tool                                             |
+| `third_party_tool`                            | Any other registered extension tool                         |
 
 ```jsonc
 {
@@ -450,6 +450,43 @@ A substitution in a **redirect target** (`echo hi > $(rm *.txt)`, `cat < <(rm c)
 A quoted heredoc delimiter (`<<'EOF'` or `<<"EOF"`) does not interpolate, so its body is literal text and nothing in it is evaluated as a command.
 The enclosing command is still matched without its redirect, so a rule like `npm install` keeps matching `npm install > out.txt`.
 Control-flow bodies (`if`/`while`/`for`/`case`) and `{ … }` brace groups are not descended into; their contents are matched as part of the enclosing statement's text.
+
+A command that starts with `~`, `$HOME`, or `${HOME}` also matches a home-anchored pattern spelled any of those ways, or with the absolute home directory (see [Home Directory Expansion in Patterns](#home-directory-expansion-in-patterns)).
+
+A path argument also matches in its absolute spelling.
+Each command is matched as typed and with every path argument replaced by the absolute path it resolves to, against the working directory a literal `cd` earlier in the chain moved to.
+The last rule matching either text wins, as for any other pattern.
+
+```jsonc
+{
+  "permission": {
+    "bash": {
+      "*": "allow",
+      "rm *": "ask",
+      "rm /tmp/agent-builds/*": "allow"
+    }
+  }
+}
+```
+
+With this policy, `cd /tmp && rm agent-builds/x` runs, because `rm agent-builds/x` is also matched as `rm /tmp/agent-builds/x`.
+An absolute `deny` reaches the relative spelling the same way.
+An absolute `allow` written *before* the broader `ask` still loses to it.
+
+Some arguments get no absolute spelling and are matched as typed only:
+
+- an argument after a `cd` whose target is not literal (`cd "$DIR"`, `cd -`, a bare `cd`), since the directory is not known;
+- an argument holding a glob (`*`, `?`, `[`), quoted or not;
+- an argument a variable or substitution computes (`$DIR/x`, `$(pwd)/x`);
+- a bare name such as `config.json` that names nothing on disk;
+- a POSIX absolute path on Windows (`/tmp/x`), which is kept as typed.
+
+The absolute spelling replaces every path argument of a command at once, and it is separate from the home spelling above.
+A rule naming one argument absolute and another relative, or naming both the expanded home and an absolute argument, matches neither text.
+A quoted argument is spelled without its quotes (`rm "a b/c"` is also matched as `rm /tmp/a b/c`).
+Whether an argument is a path is decided by its shape, so a slash-bearing word that is not one is spelled too: `git push origin feature/x` is also matched as `git push origin <cwd>/feature/x`, which only a rule naming that absolute form would match.
+When the spelling is what a rule matched, the prompt shows it on a `matched as` line beside the rule, and the review log records it as `matchedSpelling`.
+A session approval still records the command as typed, so approving `rm agent-builds/x` does not cover a later `rm /tmp/agent-builds/x`.
 
 A leading environment-variable assignment prefix is stripped before matching, so the rule gates the underlying command rather than the prefix.
 So `AWS_PROFILE=prod aws ec2 …` is matched as `aws ec2 …` — a `aws *` rule applies even though the invocation begins with `AWS_PROFILE=`.
@@ -530,11 +567,16 @@ The bash gate fails closed: when in doubt it blocks or prompts, never silently a
 - An indirection wrapper — `sudo`, `env`, `xargs`, `time`, `nohup`, `timeout`, `nice`, `parallel`, `rust-parallel`, `rush`, `doas`, `setsid`, `stdbuf`, `watch`, `flock`, or `find`/`fd` carrying a per-result exec flag (`find` with `-exec`/`-execdir`/`-ok`/`-okdir`, `fd` with `-x`/`--exec`/`-X`/`--exec-batch`) — runs a following command that a rule on the wrapper text would otherwise never gate, so its decision is floored the same way (the synthetic `<indirection-bash-wrapper>` pattern in the review log).
   So `sudo aws s3 rm s3://bucket` prompts rather than riding an `aws *: allow`, while a bare `find . -name '*.py'` search (no exec flag) is unaffected.
   An `allow` is clamped to `ask`, and an explicit `deny` still denies.
-  The one exception is a wrapper running a [pure-reader command](#wrapper-transparency), whose direction is provable however unknown its argument feed is.
+  The [two exceptions](#wrapper-transparency) are a wrapper running a pure-reader command, whose direction is provable however unknown its argument feed is, and a wrapper that only modifies how a command runs (`time`, `timeout`, `nice`, `stdbuf`, `setsid`), which is decided exactly as the command it runs.
 
 Every synthetic `ask` above — the two parse sentinels and both wrapper floors — is auto-approved under `yoloMode: true`, which is an explicit full-permissive opt-in rather than a rule that could ride through.
 An explicit `deny` still denies under yolo, and with yolo off the floors are unaffected.
 Approving one for the session works normally: the floors clamp the decision and leave the grant's provenance intact, so a command you have already approved does not prompt again.
+
+A subagent's floored ask keeps its floor when it is forwarded to the parent session.
+The parent's `allow` rule does not answer it, so `sudo rm x` from a subagent prompts in the parent even under a parent `bash: *` allow.
+The parent's `deny` still denies, and a grant for the whole parent session or the parent's `yoloMode` still approves.
+A subagent's chained command (`ls && rm -rf /tmp/x`) is judged by the parent command by command: every command the subagent's own policy left asking is forwarded with its floor, and the parent's `deny` or `ask` on any one of them decides, not only on the first.
 
 Because of this, set an explicit `bash` policy rather than relying on a permissive top-level `*`.
 A config whose top-level `*` is `"allow"` with no `bash` `*` policy lets every bash command silently inherit `allow`; the extension emits a startup warning in that case.
@@ -543,7 +585,11 @@ To deliberately opt into permissive bash, set `"bash": { "*": "allow" }` explici
 
 ### `mcp` Surface
 
-MCP permissions match against derived targets from tool input:
+MCP permissions match against targets derived from each MCP call.
+Two kinds of tool make MCP calls, and both resolve on this one surface:
+
+- **Pi's built-in MCP** registers each server tool as its own tool, `mcp__<server>__<tool>` (for example `mcp__github__search_code`); see [Pi's built-in MCP tools](#pis-built-in-mcp-tools).
+- **The `mcp` proxy tool** (for example pi-mcp-adapter's) takes the call as input, `{"tool": …, "server": …}`.
 
 | Target type       | Examples                                                              |
 | ----------------- | --------------------------------------------------------------------- |
@@ -573,7 +619,7 @@ In that example `mcp_status` and `mcp_list` allow discovery, `myServer:*` prompt
 #### How a call becomes targets
 
 One MCP call is looked up under several names, and a rule may name any of them.
-When the call carries no explicit `server`, the server is derived from the tool name against the servers in your MCP config, in this order — the first convention that matches settles the name:
+When a proxied call carries no explicit `server`, the server is derived from the tool name against the servers in your MCP config (`~/.pi/agent/mcp.json`, plus `<project>/.pi/mcp.json` in a trusted project), in this order — the first convention that matches settles the name:
 
 1. **Qualified** — `server:tool` splits directly.
 2. **Prefix** — the **longest** configured server that is the leading segment of `<server>_<tool>`.
@@ -593,6 +639,29 @@ An explicit `server` argument skips derivation entirely.
 Deriving a server from a name is a heuristic, and it can attach the wrong rule: with `git` configured, a `git_lab_issues` tool from a different server derives `git`.
 Longest-match only helps when both servers are configured.
 Where the distinction matters, pass an explicit `server` argument or use a qualified `server:tool` name.
+
+#### Pi's built-in MCP tools
+
+Pi names each tool `mcp__<server>__<tool>`, replacing every character outside `[A-Za-z0-9_]` with `_`, so a server named `danger-srv` in `mcp.json` appears as `danger_srv` in the tool name.
+A call to such a tool is looked up under the same targets a proxied call gets, plus the tool's full Pi name, and the server is named in **both** spellings: the one in your `mcp.json` and the one in the tool name.
+Pi refuses two servers whose names differ only in `-` and `_`, so the two spellings always name the same server.
+
+| Call (`danger-srv` in `mcp.json`) | Targets                                                                                                                                             |
+| --------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `mcp__danger_srv__wipe`           | `danger-srv_wipe`, `danger-srv:wipe`, `danger-srv`, `danger_srv_wipe`, `danger_srv:wipe`, `danger_srv`, `wipe`, `mcp__danger_srv__wipe`, `mcp_call` |
+| `mcp__github__search` (`github`)  | `github_search`, `github:search`, `github`, `search`, `mcp__github__search`, `mcp_call`                                                             |
+
+So `"danger-srv": "deny"`, `"danger_srv": "deny"`, `"danger-srv:*": "deny"`, and `"mcp__danger_srv__*": "deny"` each deny every tool of that server.
+The server is the longest configured name whose Pi spelling starts the tool name; a server no `mcp.json` names, such as one an extension registers in code, is split at the first `__` and gets only Pi's spelling.
+A tool name over 64 characters, or two of a server's tools that sanitize to the same name, gets an 8-character hash suffix from Pi; the suffix is part of the tool target, so a server-level rule is the reliable way to name such a tool.
+
+The tool's arguments are its own input, unlike the proxy's: the ask prompt and the review log show them, and the [`path` and `external_directory`](#path-surface) gates read a top-level `path` argument.
+Approving such a tool "for this session" records its full Pi name on the `mcp` surface, so the approval covers exactly that tool.
+A Pi MCP tool is withheld from the model when its targets resolve to `deny`.
+
+> **Migrating:** a top-level key naming a Pi MCP tool (`"mcp__danger_srv__wipe": "deny"`) still applies, as an `mcp` rule, and raises a notice at session start asking you to move it under `mcp`.
+> A top-level wildcard of another shape (`"*__wipe"`) no longer reaches these tools.
+> See [the migration guide](migration/1001-pi-mcp-tools-on-mcp-surface.md).
 
 #### Which rule shape to write
 
@@ -659,6 +728,12 @@ The path gate runs before the external-directory and tool gates.
 If it denies, the command is blocked without reaching subsequent gates — no wasted prompts.
 
 Path patterns match both the path **as the agent references it** and its canonical (symlink-resolved) form, so a deny on a sensitive spelling cannot be evaded through a symlink alias (see Symlinked paths below).
+
+For Pi's built-in file tools (`read`, `write`, `edit`, `ls`, `find`, `grep`), the path the agent references is the file the tool opens, not the literal argument.
+Pi resolves that argument itself before touching the disk: it decodes a `file://` URL, turns Unicode spaces into ordinary spaces, translates a Git Bash, Cygwin, or WSL drive path (`/c/…`, `/cygdrive/c/…`, `/mnt/c/…`) on Windows, and for `read` alone falls back to the macOS screenshot (`\u202FPM`), NFD, and curly-quote (`’`) spellings of a name that does not exist.
+The gates match the file that resolution names, so a deny keyed on the file on disk fires however it was spelled, and an ask shows the file under "resolves to" when the spelling was rewritten.
+Pi does not expand `$HOME` or strip quotes from a tool's path, so neither do these gates: `read $HOME/.ssh/config` names `<cwd>/$HOME/.ssh/config`, the file the tool would open.
+Extension and MCP tool paths keep their literal spelling.
 
 For bash commands, the extension extracts path-candidate tokens from the command (dot-files like `.env`, relative paths like `src/foo.ts`, and absolute paths) and evaluates each against the path rules.
 The most restrictive result across all tokens determines the outcome.
@@ -756,6 +831,9 @@ Use a pattern map to allow specific directories without opening all external acc
 For example, `read: "allow"` can permit ordinary reads while `external_directory: "ask"` still requires confirmation before reading `../outside.txt` or an absolute path outside `ctx.cwd`.
 Optional-path search tools (`find`, `grep`, `ls`) skip this check when no `path` is provided.
 
+When no `external_directory` key is present, the universal fallback (`permission["*"]`) applies.
+So `"*": "allow"` lets every outside-CWD access through with no prompt and, like any policy allow, no review-log entry; the examples on this page set `"*": "ask"` inside `external_directory` so the boundary asks regardless of the fallback.
+
 #### Allow an outside-CWD cache directory
 
 When an agent keeps reading a local cache outside the working tree — `~/.cargo/registry`, `~/.npm`, `~/go/pkg/mod` — and you want to stop confirming it every time, allow that directory on the `external_directory` surface:
@@ -798,7 +876,7 @@ The governing record is [ADR 0009](https://github.com/gotgenes/pi-packages/blob/
 
 #### Symlinked paths
 
-A `path`, `external_directory`, or per-tool file-pattern rule (`read`/`write`/`edit`/`grep`/`find`/`ls`) matches the path **as the agent references it** and the OS-resolved (symlink-followed) path.
+A `path`, `external_directory`, or per-tool file-pattern rule (`read`/`write`/`edit`/`grep`/`find`/`ls`) matches the path **as the agent references it** (for a built-in file tool, the file Pi opens) and the OS-resolved (symlink-followed) path.
 This matters on macOS, where `/tmp` is a symlink to `/private/tmp`: a rule keyed on `/tmp/*` allows access via `/tmp` even though the access resolves to `/private/tmp`, and a rule keyed on `/private/tmp/*` works too.
 
 ```jsonc
@@ -817,15 +895,22 @@ For `external_directory`, the decision of whether a path is outside the working 
 
 #### Pi Infrastructure Read Auto-Allow
 
-Read-only tools (`read`, `find`, `grep`, `ls`) targeting Pi infrastructure directories are automatically allowed without triggering the gate, even when `external_directory` is `ask` or `deny`.
-Infrastructure directories include:
+Read-only tools (`read`, `find`, `grep`, `ls`) targeting Pi infrastructure paths are automatically allowed without triggering the gate, even when `external_directory` is `ask` or a catch-all `deny`.
+Infrastructure paths include:
 
-1. The agent config directory (`~/.pi/agent/` or `$PI_CODING_AGENT_DIR`)
-2. Git-cloned global packages (`<agentDir>/git/`)
-3. The global `node_modules` root (auto-discovered from the extension's own install path; falls back to `npm root -g` when running from a local development checkout)
-4. Pi's own install directory (auto-discovered via the coding-agent `getPackageDir()` API, so Pi's bundled docs and examples are readable regardless of install layout)
-5. Project-local Pi packages (`<cwd>/.pi/npm/` and `<cwd>/.pi/git/`)
-6. Any paths listed in `piInfrastructureReadPaths`
+1. Pi's harness entries under the agent config directory (`~/.pi/agent/` or `$PI_CODING_AGENT_DIR`): the directories `agents/`, `extensions/`, `git/`, `npm/`, `prompts/`, `skills/`, and `themes/`, and the files `settings.json`, `SYSTEM.md`, `APPEND_SYSTEM.md`, and `AGENTS.md`
+2. The global `node_modules` root (auto-discovered from the extension's own install path; falls back to `npm root -g` when running from a local development checkout)
+3. Pi's own install directory (auto-discovered via the coding-agent `getPackageDir()` API, so Pi's bundled docs and examples are readable regardless of install layout)
+4. Project-local Pi packages (`<cwd>/.pi/npm/` and `<cwd>/.pi/git/`)
+5. Any paths listed in `piInfrastructureReadPaths`
+
+Everything else under the agent config directory, such as `auth.json`, `models.json`, `mcp-oauth/`, and `sessions/`, goes through the gate like any other outside path.
+This package's own logs directory (`extensions/pi-permission-system/logs/`) is never auto-allowed, even when a `piInfrastructureReadPaths` entry covers it.
+
+A deny rule on `external_directory` or `external_directory_read` whose pattern names an infrastructure path outranks the auto-allow and blocks the read.
+A catch-all `"*"` deny and the universal `permission["*"]` fallback do not, so a deny-by-default policy keeps its skill and package reads.
+Rules are last-match-wins, so write the catch-all before the targeted deny.
+See [the migration guide](migration/0955-pi-infrastructure-read-narrowed.md) for the change from earlier releases.
 
 Write tools (`write`, `edit`) to infrastructure paths are **not** auto-allowed and still go through the gate.
 
@@ -924,7 +1009,7 @@ A path token owned by one of them consults the `_read` surface alone:
 
 <!-- BEGIN PURE_READER_CORE -->
 
-`awk`, `basename`, `cat`, `cd`, `diff`, `dirname`, `echo`, `egrep`, `fd`, `fgrep`, `find`, `grep`, `head`, `ls`, `pwd`, `realpath`, `rg`, `sed`, `sort`, `stat`, `tail`, `wc`, `which`
+`:`, `awk`, `basename`, `cat`, `cd`, `diff`, `dirname`, `echo`, `egrep`, `false`, `fd`, `fgrep`, `find`, `grep`, `head`, `ls`, `pwd`, `realpath`, `rg`, `sed`, `sort`, `stat`, `tail`, `true`, `wc`, `which`
 
 <!-- END PURE_READER_CORE -->
 
@@ -973,7 +1058,12 @@ Two more shapes withdraw the claim:
 #### Wrapper transparency
 
 The [indirection-wrapper floor](#fail-closed-behavior) exists because a wrapper hides the command that should be gated.
-For one class the hiding is immaterial: a pure-reader command is read-only for **any** arguments, so `xargs grep -l foo` is provably a read even though what `xargs` feeds it is unknowable.
+Two kinds of wrapper unit have no reason to be floored: one running a [pure reader](#a-wrapper-running-a-pure-reader), and one that only [modifies how a command runs](#a-wrapper-that-only-modifies-execution).
+Each resolves by the inner command's own `bash` rules, and the review log records which reason applied as `floorExemption`.
+
+##### A wrapper running a pure reader
+
+For this class the hiding is immaterial: a pure-reader command is read-only for **any** arguments, so `xargs grep -l foo` is provably a read even though what `xargs` feeds it is unknowable.
 The floor guards unknowability of *scope*, and scope stays the path surfaces' job — for a wrapped command exactly as for a bare one.
 
 Such a unit is therefore **not** floored.
@@ -984,12 +1074,13 @@ All four of these must hold, and each is a way the floor's reason could still ap
 1. The unit is an indirection wrapper.
    An `sh -c`/`eval` payload is not one — see below.
 2. The command it runs can be established without passing through an inline shell.
+   `watch` and `parallel` hand their whole command line to a shell, and `rush` and `rust-parallel` build theirs from a template, so a unit with any of the four as a layer never qualifies: `watch cat x \; rm y` runs `rm`.
 3. That command **proves** a read: a bare-basename core word with no option that withdraws the claim.
    So `xargs sort -o /tmp/x` and `xargs find . -delete` stay floored, and so does `xargs ./grep foo`.
 4. The enclosing statement provably writes no file through a redirect.
    A destination the parse cannot resolve — `> $OUT`, `> $(mktemp)` — counts against the exemption rather than for it.
 
-So `xargs grep -l foo`, `xargs wc -l`, `xargs sed -n 1p`, and `find . -name '*.ts' -exec cat {} +` stop prompting under a matching `bash` allow, while `xargs rm`, `xargs sed -i`, `time pnpm test`, and `find . -exec sh -c '…' \;` still prompt.
+So `xargs grep -l foo`, `xargs wc -l`, `xargs sed -n 1p`, `find . -name '*.ts' -exec cat {} +`, and the no-op probe `sudo -n true` stop prompting under a matching `bash` allow, while `xargs rm`, `xargs sed -i`, and `find . -exec sh -c '…' \;` still prompt.
 
 Three things this does **not** change:
 
@@ -1001,10 +1092,36 @@ Three things this does **not** change:
   The exemption decides the `bash` surface only, and every path token the command projects still goes through `path` and `external_directory` with the direction its command proved.
   Clause 4 is what keeps that from being a weaker promise than it sounds: a redirect destination the parse cannot resolve (`> $OUT`, `> $(mktemp)`) is not projected onto those surfaces either, so the wrapper keeps its floor rather than relying on a gate that would not see the write.
 
+##### A wrapper that only modifies execution
+
+`time`, `timeout`, `nice`, `stdbuf`, and `setsid` change only *how* the same visible command runs: its timing, kill deadline, scheduling, buffering, or session.
+Every operand is on the command line, and the wrapper adds no privilege, environment, or argument feed, so the floor's reason does not hold whatever the inner command does.
+Such a unit resolves exactly as the command it runs, and the review log records `floorExemption: "execution-modifier"`.
+
+All four of these must hold, and each keeps the decision about the command that really runs:
+
+1. **Every** wrapper layer is one of the five.
+   `time sudo rm -rf x` and `sudo time pnpm test` stay floored, as do `nohup` (it may write `nohup.out`) and `flock` (it creates its lock file).
+2. Every option on each layer is one that wrapper is known to take, spelled in full, and every option, value, and operand is written literally (an environment assignment, which the shell does not split, may be computed).
+   A word the shell rewrites (`timeout $D …`, `timeout {5,sudo} …`) may become several, one of them a wrapper, so it keeps the floor.
+   So `timeout --sig KILL 5 …` (an abbreviation) and `nice -5 …` stay floored, and so do `time`'s file-writing `-o`, `--output`, and `-a`.
+   The admitted options are `time -p`/`-l`/`-h`/`-f`; `timeout -s`/`-k`/`-f`/`-p`/`-v` and their long forms; `nice -n`/`--adjustment`; and `stdbuf -i`/`-o`/`-e` and their long forms.
+3. The command it runs is not itself a wrapper or an inline shell, so `timeout 5 bash -c '…'` stays floored.
+4. The command it runs is named literally.
+   `time ( … )` is decided by the commands inside it, each on its own rule, so `time (rm -rf /tmp/x)` reaches an `rm *` deny.
+   `time { …; }` stays floored: the parser reads the group as `time`'s arguments, so the commands inside are not yet gated on their own rules.
+
+So under `bash: {"*": "allow", "git push *": "deny"}`, `time pnpm run lint >/tmp/lint.txt 2>&1` is allowed and `timeout 60 git push --force` is denied, exactly as without the wrapper.
+No redirect refusal applies here: the redirect destination goes through `path` and `external_directory` as it does for the bare command, and a destination the parse cannot resolve (`> $OUT`) is unprojected for both forms alike.
+When a unit qualifies for both exemptions (`time grep foo`), the review log records `core-reader`.
+
+##### Declarations and privilege
+
+Neither exemption is extended by configuration.
 A user `commandEffects` declaration participates in effect classification but does **not** lift the floor.
 The core's argument-independence is audited here; a claim about a wrapped command is not, and a wrong claim behind a wrapper fails open.
 
-`sudo` and `doas` are ordinary wrappers to this rule.
+`sudo` and `doas` are ordinary wrappers to the pure-reader rule, and never execution modifiers.
 The path surfaces gate `sudo cat /etc/shadow` exactly as they gate `cat /etc/shadow`, so nothing about the *file set* changes — what `sudo` adds is that the operating system would have refused, which this extension has never modelled.
 If you run a permissive `bash` policy and want privilege elevation to prompt regardless, say so directly:
 
@@ -1021,6 +1138,21 @@ If you run a permissive `bash` policy and want privilege elevation to prompt reg
 ```
 
 That rule matches the wrapper's own text, so it is decided before the exemption is ever consulted.
+
+`sudo`'s own options are read the way `sudo` reads them, so `sudo -nu cat rm x` runs `rm x`, not a pure reader named `cat`.
+A `sudo` mode in which the command it names is not what runs as named keeps the floor whatever that command is: `-e`/`--edit` (sudoedit edits its operands as files, as root), `-s`/`--shell` and `-i`/`--login` (a shell runs the operand), and `-D`/`--chdir` and `-R`/`--chroot` (relative operands resolve somewhere the path surfaces do not look).
+So does `-h`, whose meaning depends on what follows it, and any option `sudo`'s manual does not list; a mode that keeps the floor is approved at the prompt or under `yoloMode`.
+
+`env`, `xargs`, and `doas` are read the same way, from the BSD and GNU manuals for the first two and `opendoas` for the third, and any option those do not list keeps the floor too.
+So `xargs -n 1 cat` and `env -u FOO cat x` still resolve by `cat`'s rule, while these keep the floor whatever command they name:
+
+- `env -C`/`--chdir`, because relative operands resolve somewhere the path surfaces do not look (`env -C /etc cat shadow` reads `/etc/shadow`).
+- `env -S`/`--split-string`, because the command is split out of one word at run time (`env -Srm cat` runs `rm cat`).
+- `env -P`, `-a`/`--argv0`, and `--env0-from`, because each chooses which binary the named command is: a search path, the argv0 a multi-call binary dispatches on, or an environment that may set `PATH`.
+- `xargs -J`, because it puts input in the command's place when the command equals its replacement string.
+- `doas -C` (it checks a config and runs nothing), `doas -s` (it runs a shell), and OpenBSD's `doas -a`, which `opendoas` does not list.
+
+GNU `xargs -i`, `-l`, `-e`, and `--max-lines` take a value only when it is attached (`-i{}`, `--max-lines=2`), so `xargs -i rm cat x` runs `rm`, and `xargs` and `doas` run a `NAME=value` word as the command rather than an assignment.
 
 #### Which key to actually write
 
@@ -1073,8 +1205,24 @@ A prefix is recognized only when it stands alone or precedes a separator, so a l
 
 The pattern is stored and displayed as written (e.g. `~/development/*`) in logs and approval dialogs.
 
-Path **values** supplied by tool calls and bash commands are expanded the same way.
-This means `~/...`, `$HOME/...`, `${HOME}/...`, and the fully-expanded absolute form all match a single home-anchored pattern: a `read` tool called with path `~/.ssh/config`, `$HOME/.ssh/config`, `${HOME}/.ssh/config`, or `/Users/me/.ssh/config` is all caught by a `"~/.ssh/*": "deny"` rule.
+Path **values** supplied by bash commands and extension tools are expanded the same way.
+This means `~/...`, `$HOME/...`, `${HOME}/...`, and the fully-expanded absolute form all match a single home-anchored pattern: `cat ~/.ssh/config`, `cat $HOME/.ssh/config`, or `cat /Users/me/.ssh/config` is caught by a `"~/.ssh/*": "deny"` rule.
+Pi's built-in file tools expand only `~`, as Pi itself does: a `read` of `~/.ssh/config` or `/Users/me/.ssh/config` is caught, while a `read` of `$HOME/.ssh/config` opens `<cwd>/$HOME/.ssh/config` and is matched as that file.
+
+A `bash` command that **starts** with a home prefix matches a home-anchored command pattern the same way.
+With `"~/bin/tool *": "deny"`, the commands `~/bin/tool --now`, `$HOME/bin/tool --now`, `${HOME}/bin/tool --now`, and `/Users/me/bin/tool --now` are all denied, and an allow written with `~` covers each of those spellings too.
+The command is still shown, logged, and offered for session approval as typed.
+Three limits apply:
+
+- On Windows, a home-anchored `bash` pattern is compiled with backslash separators, so it matches only a command typed with the backslashed absolute path ([issue #1020](https://github.com/gotgenes/pi-packages/issues/1020)).
+- A command that reassigns `HOME` earlier in the same invocation (`HOME=/tmp/x; ~/bin/tool`, or a `HOME=/tmp/x` prefix) is matched only as typed, because its `~` no longer names your home directory.
+  A reassignment the parser cannot see, such as one through a variable holding the name (`n=HOME; read $n`), is not detected, so the command still matches your home-anchored rules.
+  Writing a command that way takes deliberate effort to evade a rule; run an agent you would not trust with that inside a sandbox rather than relying on command patterns.
+- A home prefix later in the command, in argument position, is matched as typed: a pattern `cat ~/notes` matches the command `cat ~/notes` but not `cat /Users/me/notes`.
+  Gate file access by any spelling on the `path` and `external_directory` surfaces instead.
+
+The `bash` surface matches text, so a `*` in a home-anchored pattern also matches `..`: `~/bin/*` allows `~/bin/../../tmp/x`, exactly as it allows `/Users/me/bin/../../tmp/x`.
+Anchor an allow on the full command (`~/bin/tool *`) rather than a directory wildcard when that matters.
 
 ---
 
@@ -1314,11 +1462,11 @@ permission:
 
 The extension integrates via Pi's lifecycle hooks:
 
-| Hook                 | Behavior                                                                                                                                                                                                      |
-| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `before_agent_start` | Filters the active tool set (restrict-only), restates the tool list and guidelines at the end of the system prompt to match (except under a custom system prompt outside a subagent), and hides denied skills |
-| `tool_call`          | Enforces permissions for every tool invocation                                                                                                                                                                |
-| `input`              | Intercepts `/skill:<name>` requests and enforces skill policy                                                                                                                                                 |
+| Hook                 | Behavior                                                                                                                                                                                |
+| -------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `before_agent_start` | Filters the active tool set (restrict-only), states a subagent child's own tool list and rules, and hides denied skills, all through pi's prompt options rather than a rewritten prompt |
+| `tool_call`          | Enforces permissions for every tool invocation                                                                                                                                          |
+| `input`              | Intercepts `/skill:<name>` requests and enforces skill policy                                                                                                                           |
 
 Additional behaviors:
 
@@ -1326,20 +1474,22 @@ Additional behaviors:
 - Tool filtering is restrict-only: the active set starts from pi's already-active tools (`pi.getActiveTools()`) and only ever has denied tools removed — the permission system never activates a tool pi left off by default (e.g. `find`, `grep`, `ls`)
 - Policy is applied to the tool surface pi has activated over the session, not to the previous turn's filtered result, so removing a `deny` rule restores the tool it had hidden without restarting pi.
   A tool that stops being active for any other reason (another extension deactivating it, pi unregistering it) is not restored.
-- On the turn a tool is restored, it is callable immediately but its `Available tools:` line reappears one turn later: pi builds the prompt parts an extension receives before the extension runs, so the restored tool has no one-line description to render until it is already active
 - A tool is removed only when every value under its surface resolves to `deny`; a surface with any reachable `allow` or `ask` pattern stays available (see [Tool Surfaces](#tool-surfaces))
-- The tool list and guidelines are **relocated** rather than edited in place: the copies pi wrote are removed, and this session's own are rendered at the end of the system prompt, after the working directory pi states last.
-  They take the shape pi writes them in: `Available tools:` and `Guidelines:` sections after a `Current working directory:` footer through pi 0.85, and `<tools>` and `<rules>` sections after a `<cwd>` section from pi 0.86.
-  Each session states its own tool surface, which is what keeps a subagent child's inherited prompt byte-identical to its parent's (see [ADR 0014](decisions/0014-tool-surface-is-node-local-prose.md)); the tool list moves to the end of the prompt for every session on pi's default prompt, whether or not anything is denied.
-  A custom system prompt (`.pi/SYSTEM.md`, `~/.pi/agent/SYSTEM.md`, `--system-prompt`) is left exactly as pi built it: pi writes no tool list or rules under one, and this extension adds none either, so the prompt describes tools only if you wrote that yourself.
+- Every change this extension makes to the system prompt goes through pi's `systemPromptOptions`; it never returns a rewritten prompt.
+  A returned prompt is sent as the whole prompt, which would drop the sections other extensions add after this one runs, such as pi's `<mcp_servers>` list of `codemode` and `deferred` MCP servers (see [ADR 0015](decisions/0015-prompt-changes-through-system-prompt-options.md)).
+- On pi's default prompt, the tool list and guidelines stay where pi writes them, as its `<tools>` and `<rules>` sections, and pi renders them from the filtered active set, so a denied tool and its guidelines are absent and a restored tool is listed on the turn it returns.
+- A custom system prompt (`.pi/SYSTEM.md`, `~/.pi/agent/SYSTEM.md`, `--system-prompt`) is left exactly as pi built it: pi writes no tool list or rules under one, and this extension adds none either, so the prompt describes tools only if you wrote that yourself.
   Tool filtering and enforcement still apply, and the model still receives only the allowed tools in the request's tool list.
-  A subagent child is the exception: its prompt is always a custom one assembled by the subagent extension, so it still gets its own tool list and rules at the end, while any custom text it inherited stays untouched.
-- The rendered sections follow pi's own rules: a tool is listed only when pi supplied a one-line description for it, and the guideline bullets are the allowed tools' own contributions, then any rules another extension added to `systemPromptOptions.promptGuidelines`, around pi's built-in ones
-- The prompt is recomputed and returned on every turn but is stable across turns for a stable policy/agent, so the provider's prompt cache (tools + system prefix) is preserved rather than rewritten each turn.
+  A subagent child is the exception: its prompt is always a custom one assembled by the subagent extension, so it gets its own `<tools>` and `<rules>` sections, placed after the working directory, while any custom text it inherited stays untouched.
+  The child's sections follow pi's own rules: a tool is listed only when pi supplied a one-line description for it, and the guideline bullets are the allowed tools' own contributions, then any rules another extension added to `systemPromptOptions.promptGuidelines`, around pi's built-in ones.
+- A subagent child running with `@gotgenes/pi-subagents` needs a release that drops the parent's `<tools>` and `<rules>` from the prompt the child inherits; with an older one, the child shows the parent's tool list as well as its own.
+- A denied skill is removed from the skills catalogue pi renders.
+  A skill listed in text pi did not render, such as your own `SYSTEM.md`, is not edited out; using it is still gated.
+- The prompt options are recomputed on every turn but are stable across turns for a stable policy/agent, so the provider's prompt cache is preserved rather than rewritten each turn.
   A policy change is an intentional cache transition, as a mid-session agent switch already is.
-- Extension-provided tools like `task`, `mcp`, and third-party tools are handled by exact registered name
+- Extension-provided tools like `task`, `mcp`, and third-party tools are handled by exact registered name; Pi's built-in MCP tools (`mcp__<server>__<tool>`) resolve on the `mcp` surface instead (see [Pi's built-in MCP tools](#pis-built-in-mcp-tools))
 - Generic extension-tool approval prompts include a bounded input preview; built-in file tools use concise human-readable summaries
-- Permission review logs include `toolInputPreview` values for non-bash/non-MCP tool calls, with sensitive-keyed values masked and every value bounded by `reviewLogFieldMaxWidth` (see [Log file sensitivity](#log-file-sensitivity))
+- Permission review logs include `toolInputPreview` values for tool calls other than bash and the `mcp` proxy, with sensitive-keyed values masked and every value bounded by `reviewLogFieldMaxWidth` (see [Log file sensitivity](#log-file-sensitivity))
 - A tool whose path came from an extractor registered in an **ancestor** session rather than this one records `extractorSource: "inherited"` beside the decision; the field is absent for every path this session resolved itself.
   This happens in a subagent child when the extractor's provider was kept out of the child but the tool's own package was not — the child borrows the declaration so its `path` and `external_directory` gates still see the path (see [Subagent Integration](https://github.com/gotgenes/pi-packages/blob/main/packages/pi-permission-system/docs/subagent-integration.md#loading-asymmetry))
 

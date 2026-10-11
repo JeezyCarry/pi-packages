@@ -1,4 +1,4 @@
-import type { AssistantMessage } from "@earendil-works/pi-ai";
+import type { AssistantMessage, ToolCall } from "@earendil-works/pi-ai";
 
 /**
  * Wrap reply content in the common `AssistantMessage` envelope the tests share —
@@ -38,7 +38,7 @@ export function assistantText(text: string): AssistantMessage {
  * reviewer reading the tool call by name.
  */
 export function assistantToolCall(
-  args: Record<string, unknown>,
+  args: ToolCall["arguments"],
   name = "claude_code_report_verdict",
 ): AssistantMessage {
   return assistantReply([

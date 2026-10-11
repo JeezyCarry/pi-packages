@@ -1,4 +1,8 @@
-import type { AssistantMessage, Context } from "@earendil-works/pi-ai";
+import type {
+  AssistantMessage,
+  Context,
+  ToolCall,
+} from "@earendil-works/pi-ai";
 import type { Mock } from "vitest";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -25,7 +29,7 @@ const CONFIG: ModelJudgeConfig = {
 const MODEL = makeModel();
 
 /** A `complete` seam that returns a forced tool call carrying `args`. */
-function completeReporting(args: Record<string, unknown>): Mock<CompleteFn> {
+function completeReporting(args: ToolCall["arguments"]): Mock<CompleteFn> {
   return vi.fn(async () => assistantToolCall(args));
 }
 

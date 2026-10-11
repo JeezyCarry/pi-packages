@@ -249,7 +249,7 @@ Failures additionally fire a `notify(..., "warning")` toast and leave an error-s
 
 Set `hideSummariesInTui` to `true` to suppress the success status line.
 Failures still surface via both the warning notification and an error-styled footer status regardless of this setting.
-In non-interactive contexts (no UI), this setting has no effect — summaries go to `console.log` / `console.warn` as before.
+In non-interactive contexts (no UI), this setting has no effect: success summaries are never written, and failures still go to `console.warn`.
 
 Example:
 

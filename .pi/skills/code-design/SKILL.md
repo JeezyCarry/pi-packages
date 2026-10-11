@@ -270,8 +270,8 @@ If the promise was previously assigned or awaited, the `void` is a behavior chan
 
 ### Closure narrowing loop
 
-`.forEach()` callback mutations of outer-scope `let` variables are invisible to TypeScript's control-flow narrowing outside the callback; `@typescript-eslint/no-unnecessary-condition` then flags a later `if (!flag)` check as "always truthy"/"always falsy" even though the flag does change at runtime.
-Fix: use a `for...of` loop instead of `.forEach()` when a callback mutates a variable a later conditional depends on.
+`.forEach()` and event-listener callbacks that mutate outer-scope `let` variables are invisible to TypeScript's control-flow narrowing outside the callback; `@typescript-eslint/no-unnecessary-condition` then flags a later check as "always truthy"/"always falsy" even though the flag does change at runtime.
+Fix: use a `for...of` loop instead of `.forEach()`; for a listener (`session.subscribe`), pass the flags as parameters to a helper that branches on them.
 
 ### Speculative eslint-disable directives
 

@@ -30,6 +30,7 @@ A pre-commit hook and `pnpm run lint` now catch it, so the byte no longer reache
 
 A multi-line `perl -0777`/`sed` regex substitution across many similar blocks is a trap — a non-greedy `.*?` group spans block boundaries and silently corrupts a neighbor; collapse repeated multi-line literals with per-block `Edit` calls and reserve scripted substitution for single-line per-symbol renames.
 A line-mode `sed -i`/`perl -pi` (no `-0777`) holds one line in the pattern space, so a pattern containing `\n` silently matches nothing and reports success — use `Edit`.
+Confirm a scripted edit applied (`git diff --stat`) before reading any result from it — a mutation, or a spike counting `tsc` fallout; a `perl -0pi` that matches nothing exits 0, and its "0 errors" is then a number nobody measured.
 A scripted bulk edit across test files cannot tell a mock **producer** from an **assertion**, whatever its regex safety, so its correctness rests on the suite rather than the script.
 That holds only where assertions are exact (`toEqual`/`toHaveBeenCalledWith`).
 A touched `toMatchObject`/`objectContaining` site absorbs a wrong insertion and still passes — re-read those by hand instead of counting the green run as verification.

@@ -4,15 +4,17 @@ import { ConcurrencyLimiter } from "#src/lifecycle/concurrency-limiter";
 import type { CreateSubagentSessionParams } from "#src/lifecycle/create-subagent-session";
 import type { AgentSpawnConfig } from "#src/lifecycle/subagent-manager";
 import { resolveRetentionWindow, SubagentManager, type SubagentManagerObserver } from "#src/lifecycle/subagent-manager";
-import type { SubagentSession } from "#src/lifecycle/subagent-session";
+import type { SubagentSession, TurnLoopResult } from "#src/lifecycle/subagent-session";
 import type { WorkspaceProvider } from "#src/lifecycle/workspace";
 import { NotificationManager } from "#src/observation/notification";
 import type { RunConfig } from "#src/runtime";
+import { GetResultTool } from "#src/tools/get-result-tool";
 import type { AgentConfig, Subagent } from "#src/types";
 import { makeWorkspace, makeWorkspaceProvider } from "#test/helpers/make-workspace";
 import { createBlockingFactory, createSessionFactory } from "#test/helpers/manager-stubs";
 import { createMockSession, createSubagentSessionStub, emitResumeUsageAndCompaction, toSubagentSession } from "#test/helpers/mock-session";
-import { STUB_SNAPSHOT } from "#test/helpers/stub-ctx";
+import { STUB_CTX, STUB_SNAPSHOT } from "#test/helpers/stub-ctx";
+import { turnLoopResult } from "#test/helpers/turn-loop-result";
 
 /** Default max concurrent background agents (matches production default). */
 const DEFAULT_MAX_CONCURRENT = 4;
@@ -409,7 +411,7 @@ describe("SubagentManager", () => {
           stub.runTurnLoop.mockImplementation(async () => {
             if (n === 1) await gate1;
             if (n === 2) await gate2;
-            return { responseText: `result-${n}`, aborted: false, steered: false };
+            return turnLoopResult({ responseText: `result-${n}` });
           });
           return toSubagentSession(stub);
         });
@@ -478,7 +480,7 @@ describe("SubagentManager", () => {
           const stub = createSubagentSessionStub();
           stub.runTurnLoop.mockImplementation(async () => {
             if (n === 1) await gate;
-            return { responseText: "ok", aborted: false, steered: false };
+            return turnLoopResult({ responseText: "ok" });
           });
           return toSubagentSession(stub);
         });
@@ -557,7 +559,7 @@ describe("SubagentManager", () => {
           const stub = createSubagentSessionStub();
           stub.runTurnLoop.mockImplementation(async () => {
             if (n === 1) await gate;
-            return { responseText: `result-${n}`, aborted: false, steered: false };
+            return turnLoopResult({ responseText: `result-${n}` });
           });
           return toSubagentSession(stub);
         });
@@ -1140,7 +1142,7 @@ describe("SubagentManager", () => {
         stub.runTurnLoop.mockImplementation(async () => {
           session.emit({ type: "message_end", message: { role: "assistant", usage: { input: 100, output: 50, cacheWrite: 10 } } });
           session.emit({ type: "message_end", message: { role: "assistant", usage: { input: 200, output: 80, cacheWrite: 20 } } });
-          return { responseText: "done", aborted: false, steered: false };
+          return turnLoopResult({ responseText: "done" });
         });
         ({ manager } = createManager({ createSubagentSession: factory }));
 
@@ -1162,7 +1164,7 @@ describe("SubagentManager", () => {
           // onCompact should reflect the just-incremented count.
           session.emit({ type: "compaction_end", aborted: false, result: { tokensBefore: 12345 }, reason: "threshold" });
           session.emit({ type: "compaction_end", aborted: false, result: { tokensBefore: 22222 }, reason: "manual" });
-          return { responseText: "done", aborted: false, steered: false };
+          return turnLoopResult({ responseText: "done" });
         });
 
         ({ manager } = createManager({ createSubagentSession: factory, observer: { onSubagentCompacted: (record, info) => {
@@ -1187,7 +1189,7 @@ describe("SubagentManager", () => {
           // Emit events through the session — the record observer subscribed by
           // SubagentManager.resume() will pick them up.
           emitResumeUsageAndCompaction(session);
-          return "second";
+          return turnLoopResult({ responseText: "second" });
         });
         ({ manager } = createManager({ createSubagentSession: factory }));
 
@@ -1205,15 +1207,15 @@ describe("SubagentManager", () => {
       });
     });
 
-    describe("getRunConfig threads defaultMaxTurns and graceTurns into the turn loop", () => {
+    describe("getRunConfig threads defaultMaxTurns and wrapUpTurns into the turn loop", () => {
       let manager: SubagentManager;
 
       afterEach(async () => {
         await manager.dispose();
       });
 
-      it("passes defaultMaxTurns and graceTurns from getRunConfig to runTurnLoop", async () => {
-        const getRunConfig = vi.fn(() => ({ defaultMaxTurns: 10, graceTurns: 3, midRunUpdates: true }));
+      it("passes defaultMaxTurns and wrapUpTurns from getRunConfig to runTurnLoop", async () => {
+        const getRunConfig = vi.fn(() => ({ defaultMaxTurns: 10, wrapUpTurns: 3, midRunUpdates: true }));
         const { factory, stub } = createSessionFactory();
         ({ manager } = createManager({ getRunConfig, createSubagentSession: factory }));
 
@@ -1222,10 +1224,10 @@ describe("SubagentManager", () => {
 
         const turnOpts = stub.runTurnLoop.mock.calls[0][1];
         expect(turnOpts.defaultMaxTurns).toBe(10);
-        expect(turnOpts.graceTurns).toBe(3);
+        expect(turnOpts.wrapUpTurns).toBe(3);
       });
 
-      it("omits defaultMaxTurns and graceTurns from runTurnLoop when no getRunConfig is provided", async () => {
+      it("omits defaultMaxTurns and wrapUpTurns from runTurnLoop when no getRunConfig is provided", async () => {
         const { factory, stub } = createSessionFactory();
         ({ manager } = createManager({ createSubagentSession: factory }));
 
@@ -1234,7 +1236,7 @@ describe("SubagentManager", () => {
 
         const turnOpts = stub.runTurnLoop.mock.calls[0][1];
         expect(turnOpts.defaultMaxTurns).toBeUndefined();
-        expect(turnOpts.graceTurns).toBeUndefined();
+        expect(turnOpts.wrapUpTurns).toBeUndefined();
       });
     });
 
@@ -1284,7 +1286,7 @@ describe("SubagentManager", () => {
 
     it("calls resumeTurnLoop on the SubagentSession when resuming an agent", async () => {
       const { factory, stub } = createSessionFactory();
-      stub.resumeTurnLoop.mockResolvedValue("second");
+      stub.resumeTurnLoop.mockResolvedValue(turnLoopResult({ responseText: "second" }));
       ({ manager } = createManager({ createSubagentSession: factory }));
 
       const id = spawnBg(manager);
@@ -1299,7 +1301,7 @@ describe("SubagentManager", () => {
     it("fires onSubagentResumed when a background agent is resumed", async () => {
       const onSubagentResumed = vi.fn();
       const { factory, stub } = createSessionFactory();
-      stub.resumeTurnLoop.mockResolvedValue("second");
+      stub.resumeTurnLoop.mockResolvedValue(turnLoopResult({ responseText: "second" }));
       ({ manager } = createManager({ createSubagentSession: factory, observer: { onSubagentResumed } }));
 
       const id = spawnBg(manager);
@@ -1312,7 +1314,7 @@ describe("SubagentManager", () => {
     it("fires onSubagentResumed when a foreground agent is resumed", async () => {
       const onSubagentResumed = vi.fn();
       const { factory, stub } = createSessionFactory();
-      stub.resumeTurnLoop.mockResolvedValue("second");
+      stub.resumeTurnLoop.mockResolvedValue(turnLoopResult({ responseText: "second" }));
       ({ manager } = createManager({ createSubagentSession: factory, observer: { onSubagentResumed } }));
 
       const record = await spawnFg(manager);
@@ -1375,7 +1377,7 @@ describe("SubagentManager", () => {
       let askParent: ((question: string) => void) | undefined;
       stub.runTurnLoop.mockImplementation(() => {
         askParent?.("Which config?");
-        return Promise.resolve({ responseText: "Mapped them.", aborted: false, steered: false });
+        return Promise.resolve(turnLoopResult({ responseText: "Mapped them." }));
       });
       ({ manager } = createManager({
         createSubagentSession: vi.fn(async (params: CreateSubagentSessionParams) => {
@@ -1488,7 +1490,7 @@ describe("SubagentManager", () => {
     describe("accepted", () => {
       it("returns the resumed record", async () => {
         const { factory, stub } = createSessionFactory();
-        stub.resumeTurnLoop.mockResolvedValue("second");
+        stub.resumeTurnLoop.mockResolvedValue(turnLoopResult({ responseText: "second" }));
         ({ manager } = createManager({ createSubagentSession: factory }));
         const id = spawnBg(manager);
         await manager.getRecord(id)!.promise;
@@ -1514,7 +1516,7 @@ describe("SubagentManager", () => {
 
       it("leaves the outcome unclaimed by default", async () => {
         const { factory, stub } = createSessionFactory();
-        stub.resumeTurnLoop.mockResolvedValue("second");
+        stub.resumeTurnLoop.mockResolvedValue(turnLoopResult({ responseText: "second" }));
         ({ manager } = createManager({ createSubagentSession: factory }));
         const id = spawnBg(manager);
         await manager.getRecord(id)!.promise;
@@ -1532,21 +1534,21 @@ describe("SubagentManager", () => {
         const record = manager.getRecord(id)!;
         // resetForResume runs synchronously inside Subagent.resume(), so a claim
         // taken after the await would miss the terminal edge entirely.
-        const { promise, resolve } = Promise.withResolvers<string>();
+        const { promise, resolve } = Promise.withResolvers<TurnLoopResult>();
         stub.resumeTurnLoop.mockReturnValue(promise);
 
         const resumed = manager.resume(id, "continue", { claimOutcome: true });
         await vi.waitFor(() => expect(stub.resumeTurnLoop).toHaveBeenCalled());
 
         expect(record.claimed).toBe(true);
-        resolve("second");
+        resolve(turnLoopResult({ responseText: "second" }));
         await resumed;
       });
 
       it("tells the observer a resume started, before it reports one finished", async () => {
         const calls: string[] = [];
         const { factory, stub } = createSessionFactory();
-        stub.resumeTurnLoop.mockResolvedValue("second");
+        stub.resumeTurnLoop.mockResolvedValue(turnLoopResult({ responseText: "second" }));
         ({ manager } = createManager({
           createSubagentSession: factory,
           observer: {
@@ -1564,7 +1566,7 @@ describe("SubagentManager", () => {
 
       it("runs the resumed turn loop under the record's own lever", async () => {
         const { factory, stub } = createSessionFactory();
-        stub.resumeTurnLoop.mockResolvedValue("second");
+        stub.resumeTurnLoop.mockResolvedValue(turnLoopResult({ responseText: "second" }));
         ({ manager } = createManager({ createSubagentSession: factory }));
         const id = spawnBg(manager);
         await manager.getRecord(id)!.promise;
@@ -1574,7 +1576,7 @@ describe("SubagentManager", () => {
 
         // The caller's signal is wired through the record's abort(), so the loop
         // runs under the one lever abort(id) can also pull.
-        expect(stub.resumeTurnLoop).toHaveBeenCalledWith("continue", manager.getRecord(id)!.abortController.signal);
+        expect(stub.resumeTurnLoop).toHaveBeenCalledWith("continue", expect.objectContaining({ signal: manager.getRecord(id)!.abortController.signal }));
       });
 
       it("stops an in-flight resume when the caller aborts it by id", async () => {
@@ -1582,12 +1584,12 @@ describe("SubagentManager", () => {
         ({ manager } = createManager({ createSubagentSession: factory }));
         const id = spawnBg(manager);
         await manager.getRecord(id)!.promise;
-        const gate = Promise.withResolvers<string>();
+        const gate = Promise.withResolvers<TurnLoopResult>();
         let signalled = false;
-        stub.resumeTurnLoop.mockImplementation((_prompt: string, signal?: AbortSignal) => {
+        stub.resumeTurnLoop.mockImplementation((_prompt: string, { signal }: { signal?: AbortSignal }) => {
           signal?.addEventListener("abort", () => {
             signalled = true;
-            gate.resolve("partial answer");
+            gate.resolve(turnLoopResult({ responseText: "partial answer" }));
           });
           return gate.promise;
         });
@@ -1601,6 +1603,124 @@ describe("SubagentManager", () => {
         expect(signalled).toBe(true);
         expect(manager.getRecord(id)!.status).toBe("stopped");
       });
+    });
+
+    describe("announcement after an outcome a carrier already delivered", () => {
+      let sendMessage: Mock;
+
+      // A real NotificationManager wired the way SubagentEventsObserver wires it,
+      // with the parent idle, so a resumed outcome nobody claims is sent at once.
+      beforeEach(() => {
+        sendMessage = vi.fn();
+        const notifications = new NotificationManager(sendMessage);
+        const { factory, stub } = createSessionFactory();
+        stub.resumeTurnLoop.mockResolvedValue(turnLoopResult({ responseText: "second" }));
+        ({ manager } = createManager({
+          createSubagentSession: factory,
+          observer: { onSubagentResumed: (r) => notifications.sendCompletion(r) },
+        }));
+      });
+
+      it("announces an unclaimed resume of an agent a foreground spawn delivered", async () => {
+        const record = await spawnFg(manager);
+
+        await manager.resume(record.id, "continue");
+
+        expect(sendMessage).toHaveBeenCalledOnce();
+        expect(record.claimed).toBe(false);
+      });
+
+      it("announces an unclaimed resume of an agent a claimed resume delivered", async () => {
+        const record = await spawnFg(manager);
+        await manager.resume(record.id, "first answer", { claimOutcome: true });
+
+        await manager.resume(record.id, "second answer");
+
+        expect(sendMessage).toHaveBeenCalledOnce();
+      });
+
+      it("announces nothing for a claimed resume that starts while a waiter is waking", async () => {
+        const sendMessage = vi.fn();
+        const notifications = new NotificationManager(sendMessage);
+        const { factory, stub } = createSessionFactory();
+        const resumed = Promise.withResolvers<TurnLoopResult>();
+        stub.resumeTurnLoop.mockReturnValue(resumed.promise);
+        let resumeOutcome: Promise<unknown> | undefined;
+        ({ manager } = createManager({
+          createSubagentSession: factory,
+          observer: {
+            // A consumer that resumes the moment the run settles, as a
+            // subagents:completed handler can, before the waiter wakes.
+            onSubagentCompleted: (r) => {
+              notifications.sendCompletion(r);
+              resumeOutcome = manager.resume(r.id, "continue", { claimOutcome: true });
+            },
+            onSubagentResumed: (r) => notifications.sendCompletion(r),
+          },
+        }));
+        const id = spawnBg(manager);
+        const waiter = new GetResultTool(manager, defaultRegistry());
+
+        await waiter.execute("tc-1", { agent_id: id, wait: true }, new AbortController().signal, undefined, STUB_CTX);
+        resumed.resolve(turnLoopResult({ responseText: "second" }));
+        await resumeOutcome;
+
+        // The resumer receives the outcome; nothing announces it a second time.
+        expect(sendMessage).not.toHaveBeenCalled();
+      });
+
+      it("still announces nothing for a claimed resume", async () => {
+        const record = await spawnFg(manager);
+
+        await manager.resume(record.id, "continue", { claimOutcome: true });
+
+        expect(sendMessage).not.toHaveBeenCalled();
+      });
+    });
+  });
+
+  describe("startResume", () => {
+    let manager: SubagentManager;
+
+    afterEach(async () => {
+      await manager.dispose();
+    });
+
+    it("returns the record already running the resume, before the resumed run settles", async () => {
+      const { factory, stub } = createSessionFactory();
+      ({ manager } = createManager({ createSubagentSession: factory }));
+      const id = spawnBg(manager);
+      const record = manager.getRecord(id)!;
+      await record.promise;
+      const gate = Promise.withResolvers<TurnLoopResult>();
+      stub.resumeTurnLoop.mockReturnValue(gate.promise);
+
+      const start = manager.startResume(id, "continue");
+
+      expect(start).toEqual({ kind: "started", record });
+      expect(record.status).toBe("running");
+      gate.resolve(turnLoopResult({ responseText: "second" }));
+      await record.promise;
+      expect(record.status).toBe("completed");
+    });
+
+    it("refuses an id no record answers to", () => {
+      ({ manager } = createManager());
+
+      expect(manager.startResume("nope", "continue")).toEqual({ kind: "refused", reason: "unknown-agent" });
+    });
+
+    it("refuses a run that has not settled, starting no turn loop", async () => {
+      const { factory, stub } = createSessionFactory();
+      // The session exists and its first run is still in flight, so only the
+      // refusal stands between this call and a second turn loop.
+      stub.runTurnLoop.mockReturnValue(new Promise(() => {}));
+      ({ manager } = createManager({ createSubagentSession: factory }));
+      const id = spawnBg(manager);
+      await vi.waitFor(() => expect(stub.runTurnLoop).toHaveBeenCalled());
+
+      expect(manager.startResume(id, "continue")).toEqual({ kind: "refused", reason: "still-running" });
+      expect(stub.resumeTurnLoop).not.toHaveBeenCalled();
     });
   });
 });

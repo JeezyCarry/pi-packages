@@ -8,6 +8,7 @@ import {
   SUBAGENT_CHILD_SESSION_CREATED,
   SUBAGENT_CHILD_SPAWNING,
 } from "#src/lifecycle/child-lifecycle";
+import { childCompletedEvent } from "#test/helpers/turn-loop-result";
 
 function setup(): {
   emit: ReturnType<typeof vi.fn>;
@@ -49,20 +50,11 @@ describe("createChildLifecyclePublisher", () => {
   it("emits subagents:child:completed with the run outcome", () => {
     const { emit, publisher } = setup();
 
-    publisher.completed({
-      sessionDir: "/sessions/child-abc",
-      agentName: "Explore",
-      aborted: false,
-      steered: true,
-    });
+    const event = childCompletedEvent({ sessionDir: "/sessions/child-abc", turnBudget: { maxTurns: 2, used: 3, phase: "warned" } });
+    publisher.completed(event);
 
     expect(emit).toHaveBeenCalledOnce();
-    expect(emit).toHaveBeenCalledWith(SUBAGENT_CHILD_COMPLETED, {
-      sessionDir: "/sessions/child-abc",
-      agentName: "Explore",
-      aborted: false,
-      steered: true,
-    });
+    expect(emit).toHaveBeenCalledWith(SUBAGENT_CHILD_COMPLETED, event);
   });
 
   it("emits subagents:child:bound with the child session id", () => {

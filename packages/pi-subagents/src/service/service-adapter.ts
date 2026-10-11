@@ -173,7 +173,6 @@ export function toSubagentRecord(record: Subagent): SubagentRecord {
     status: record.status,
     isBackground: record.isBackground,
     toolUses: record.toolUses,
-    turnCount: record.turnCount,
     startedAt: record.startedAt,
     // Copy: the agent accumulates into its own object on every message_end, so
     // an aliased snapshot would drift, and a consumer could write into the
@@ -186,8 +185,10 @@ export function toSubagentRecord(record: Subagent): SubagentRecord {
   if (record.pendingQuestion !== undefined) out.pendingQuestion = record.pendingQuestion;
   if (record.error !== undefined) out.error = record.error;
   if (record.completedAt !== undefined) out.completedAt = record.completedAt;
-  if (record.maxTurns !== undefined) out.maxTurns = record.maxTurns;
+  // Copy, like lifetimeUsage: the snapshot is by value.
+  if (record.turnBudget !== undefined) out.turnBudget = { ...record.turnBudget };
   if (record.outputFile !== undefined) out.outputFile = record.outputFile;
+  if (record.resumeRefusal !== undefined) out.resumeRefusal = record.resumeRefusal;
 
   return out;
 }

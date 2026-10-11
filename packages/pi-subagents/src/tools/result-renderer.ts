@@ -7,8 +7,9 @@
  */
 
 import type { SubagentStatus } from "#src/lifecycle/subagent-state";
+import { type TurnBudget, wrappedUpAtTurnLimit } from "#src/lifecycle/turn-limits";
 import type { AgentDetails, Theme } from "#src/ui/display";
-import { formatMs, formatTurns } from "#src/ui/display";
+import { formatMs, formatTurnBudget } from "#src/ui/display";
 import { GLYPHS, SPINNER } from "#src/ui/glyphs";
 
 // ---- Dispatcher ----
@@ -23,7 +24,7 @@ export function renderAgentResult(
 ): string {
 	if (isPartial || details.status === "running") return renderRunning(details, theme);
 	if (details.status === "background") return renderBackground(details, theme);
-	if (details.status === "completed" || details.status === "steered")
+	if (details.status === "completed")
 		return renderCompleted(details, resultText, expanded, theme);
 	if (details.status === "stopped") return renderStopped(details, theme);
 	return renderFailed(details, theme);
@@ -45,7 +46,7 @@ export function renderBackground(details: AgentDetails, theme: Theme): string {
 	return theme.fg("dim", `  ${GLYPHS.subLine}  Running in background (ID: ${details.agentId})`);
 }
 
-/** Render completed or steered status with optional expanded result text. */
+/** Render completed status, with a turn-limit caveat when it wrapped up, and optional expanded result text. */
 export function renderCompleted(
 	details: AgentDetails,
 	resultText: string,
@@ -53,8 +54,8 @@ export function renderCompleted(
 	theme: Theme,
 ): string {
 	const duration = formatMs(details.durationMs);
-	const isSteered = details.status === "steered";
-	const icon = renderStatusIcon(isSteered ? "steered" : "completed", theme);
+	const wrappedUp = wrappedUpAtTurnLimit(details);
+	const icon = wrappedUp ? renderWrappedUpIcon(theme) : renderStatusIcon("completed", theme);
 	const s = renderStats(details, theme);
 	let line = icon + (s ? " " + s : "");
 	line += " " + theme.fg("dim", "\u00B7") + " " + theme.fg("dim", duration);
@@ -75,7 +76,7 @@ export function renderCompleted(
 			}
 		}
 	} else {
-		const doneText = isSteered ? "Wrapped up (turn limit)" : "Done";
+		const doneText = wrappedUp ? "Wrapped up (budget warning)" : "Done";
 		line += "\n" + theme.fg("dim", `  ${GLYPHS.subLine}  ${doneText}`);
 	}
 	return line;
@@ -101,12 +102,29 @@ export function renderFailed(details: AgentDetails, theme: Theme): string {
 	} else {
 		line +=
 			"\n" +
-			theme.fg("warning", `  ${GLYPHS.subLine}  Aborted (max turns exceeded)`);
+			theme.fg("warning", `  ${GLYPHS.subLine}  Aborted (turn limit reached)`);
 	}
 	return line;
 }
 
 // ---- Shared helpers ----
+
+/**
+ * The themed glyph for an outcome: its status glyph, drawn in the warning color
+ * for a run that wrapped up at its turn limit.
+ */
+export function renderOutcomeIcon(
+	outcome: { status: SubagentStatus; turnBudget?: TurnBudget },
+	theme: Theme,
+): string {
+	if (wrappedUpAtTurnLimit(outcome)) return renderWrappedUpIcon(theme);
+	return renderStatusIcon(outcome.status, theme);
+}
+
+/** A success glyph in the warning color: finished, with a turn-limit caveat. */
+function renderWrappedUpIcon(theme: Theme): string {
+	return theme.fg("warning", GLYPHS.success);
+}
 
 /**
  * The themed status glyph for a settled or pending agent.
@@ -119,8 +137,6 @@ export function renderStatusIcon(status: SubagentStatus, theme: Theme): string {
 	switch (status) {
 		case "completed":
 			return theme.fg("success", GLYPHS.success);
-		case "steered":
-			return theme.fg("warning", GLYPHS.success);
 		case "stopped":
 			return theme.fg("dim", GLYPHS.stopped);
 		case "error":
@@ -141,8 +157,8 @@ export function renderStats(details: AgentDetails, theme: Theme): string {
 	const parts: string[] = [];
 	if (details.modelName) parts.push(details.modelName);
 	if (details.tags) parts.push(...details.tags);
-	if (details.turnCount != null && details.turnCount > 0) {
-		parts.push(formatTurns(details.turnCount, details.maxTurns));
+	if (details.turnBudget) {
+		parts.push(formatTurnBudget(details.turnBudget));
 	}
 	if (details.toolUses > 0)
 		parts.push(`${details.toolUses} tool use${details.toolUses === 1 ? "" : "s"}`);

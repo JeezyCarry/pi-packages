@@ -1,5 +1,17 @@
 # Changelog
 
+## [3.0.1](https://github.com/gotgenes/pi-packages/compare/pi-session-tools-v3.0.0...pi-session-tools-v3.0.1) (2026-10-03)
+
+
+### Bug Fixes
+
+* **pi-session-tools:** mark messages a context edit omitted or replaced in transcripts ([e70c1e4](https://github.com/gotgenes/pi-packages/commit/e70c1e486fb54c628241dac00f8a206293f8b67a)), closes [#1007](https://github.com/gotgenes/pi-packages/issues/1007)
+* **pi-session-tools:** show system prompt and tool-set changes in transcripts ([260c960](https://github.com/gotgenes/pi-packages/commit/260c960a6d2acbf9818d24c6aa6828e7e5f24bc7)), closes [#1007](https://github.com/gotgenes/pi-packages/issues/1007)
+
+### Documentation
+
+* **pi-session-tools:** document context-edit and system lines in transcripts ([5596f44](https://github.com/gotgenes/pi-packages/commit/5596f44f252a9cfff2c02ab592f03dfa8b815f5a)), closes [#1007](https://github.com/gotgenes/pi-packages/issues/1007)
+
 ## [3.0.0](https://github.com/gotgenes/pi-packages/compare/pi-session-tools-v2.2.0...pi-session-tools-v3.0.0) (2026-09-19)
 
 

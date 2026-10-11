@@ -59,9 +59,8 @@ export async function runForeground(
       modelName: modelLabel(recordRef?.model) ?? presentation.detailBase.modelName,
       toolUses,
       tokens: recordRef ? formatLifetimeTokens(recordRef) : "",
-      // Read activity off the record; fall back to safe defaults before onSessionCreated fires
-      turnCount: recordRef?.turnCount ?? 1,
-      maxTurns: recordRef?.maxTurns ?? execution.effectiveMaxTurns,
+      // Read activity off the record; absent until onSessionCreated fires and the loop reports
+      turnBudget: recordRef?.turnBudget,
       durationMs: Date.now() - startedAt,
       status: "running",
       activity: describeActivity(
@@ -145,7 +144,7 @@ export async function runForeground(
   const statsParts = [`${record.toolUses} tool uses`];
   if (tokenText) statsParts.push(tokenText);
   return textResult(
-    `${noteText}Agent completed in ${formatMs(durationMs)} (${statsParts.join(", ")})${renderStatusNote(record.status)}.\n` +
+    `${noteText}Agent completed in ${formatMs(durationMs)} (${statsParts.join(", ")})${renderStatusNote(record)}.\n` +
       `Agent ID: ${record.id}\n\n` +
       renderOutcomeBody(record) +
       renderOutcomeAddenda(record),

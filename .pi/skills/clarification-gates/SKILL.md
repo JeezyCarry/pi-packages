@@ -17,6 +17,7 @@ An option list is a set of choices, not a briefing; context crammed into option 
 In a bundled gate the substance requirement is per question, not per message — the least-supported question bounces the whole batch.
 Define a gate's terms of art before its substance — a term the operator must decode is a question they cannot answer; a protocol or format named in an option (`osc9`, SSE) is one: say what it is and who renders it.
 When a gate offers mechanisms for fixing a hazard, first name which component or config rule owns the lever and what happens today in each concrete configuration — a mechanism menu without that grounding gets bounced for it.
+When the options act at different points of one flow, draw the flow with each option placed at the point it changes — a mechanism comparison in prose gets bounced for the diagram.
 Hold each option's `description` to one line — a second line is substance, and substance goes in the message above.
 
 ## When the operator answers with a question
@@ -38,4 +39,5 @@ When every option shares a premise — the same object grown, the same represent
 When the change adopts a third-party artifact, that artifact's own decomposition — its config surface, its precedence order, its field set — is a premise like any other.
 Derive the option space from the problem, then check the contribution against it.
 Mark `recommended` on the option your own substance supports: when the evidence you presented shows a no-mechanism option meets the goal, recommending a mechanism requires naming the gap it closes.
+An option that files on a third-party tracker names that tracker's issue template and any stated policy on AI-written submissions: read both (`gh api repos/<o>/<r>/contents/.github/ISSUE_TEMPLATE`, `CONTRIBUTING.md`) before the gate.
 An option whose differentiator is a dependency's behavior is a claim about that dependency — read its compiled source before writing the option, never its type declaration or its name.

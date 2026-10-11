@@ -3,9 +3,11 @@ import { describe, expect, it } from "vitest";
 import {
   findUnicodeEscapes,
   formatFinding,
+  maskAllButComments,
   maskCode,
   repairUnicodeEscapes,
   run,
+  UnparseableSourceError,
 } from "../../scripts/lint/unicode-escapes.mjs";
 import { memoryIo } from "./memory-io.mjs";
 
@@ -106,6 +108,83 @@ describe("maskCode", () => {
   it("preserves the text's length and every line break", () => {
     const text = "p `q`\n```\nr\n```\ns ``t``\n";
     const masked = maskCode(text);
+
+    expect(masked.length).toBe(text.length);
+    expect(lineBreaks(masked)).toEqual(lineBreaks(text));
+  });
+});
+
+describe("maskAllButComments", () => {
+  describe("comments it keeps", () => {
+    it("keeps a line comment", () => {
+      expect(maskAllButComments("a(); // note\n", "a.ts")).toBe(
+        `${blank(5)}// note\n`,
+      );
+    });
+
+    it("keeps a block comment", () => {
+      expect(maskAllButComments("a(/* b */);", "a.ts")).toBe(
+        `${blank(2)}/* b */${blank(2)}`,
+      );
+    });
+
+    it("keeps a doc comment across lines", () => {
+      expect(maskAllButComments("/**\n * b\n */\nf();", "a.ts")).toBe(
+        `/**\n * b\n */\n${blank(4)}`,
+      );
+    });
+  });
+
+  describe("code it blanks", () => {
+    it("blanks a string literal", () => {
+      const text = 'const s = "\\u2014";';
+
+      expect(maskAllButComments(text, "a.ts")).toBe(blank(text.length));
+    });
+
+    it("blanks a template literal, comment-like text in its substitution included", () => {
+      // biome-ignore lint/suspicious/noTemplateCurlyInString: the substitution is the source under test
+      const text = 'const t = `a ${"// no"} \\u2014`;';
+
+      expect(maskAllButComments(text, "a.ts")).toBe(blank(text.length));
+    });
+
+    it("blanks a regex literal that spells a comment opener", () => {
+      const text = "const r = /\\/\\/ \\u2014/;";
+
+      expect(maskAllButComments(text, "a.ts")).toBe(blank(text.length));
+    });
+
+    it("blanks a code span inside a comment", () => {
+      expect(maskAllButComments("// a `\\u2014` b", "a.ts")).toBe(
+        `// a ${blank(8)} b`,
+      );
+    });
+  });
+
+  describe("languages", () => {
+    it("parses TypeScript-only syntax", () => {
+      expect(maskAllButComments("const n: number = 1; // c", "a.ts")).toBe(
+        `${blank(21)}// c`,
+      );
+    });
+
+    it("parses a JavaScript module", () => {
+      expect(maskAllButComments("export const x = 1; // c", "a.mjs")).toBe(
+        `${blank(20)}// c`,
+      );
+    });
+
+    it("throws on text that does not parse", () => {
+      expect(() => maskAllButComments("const x = (;", "a.ts")).toThrow(
+        UnparseableSourceError,
+      );
+    });
+  });
+
+  it("preserves the text's length and every line break", () => {
+    const text = 'f("x");\n// a\n/* b\n c */\ng(`\n`);\n';
+    const masked = maskAllButComments(text, "a.ts");
 
     expect(masked.length).toBe(text.length);
     expect(lineBreaks(masked)).toEqual(lineBreaks(text));
@@ -227,6 +306,14 @@ describe("findUnicodeEscapes", () => {
       ]);
     });
   });
+
+  describe("prose mask", () => {
+    it("scans whatever the given mask leaves visible", () => {
+      expect(findUnicodeEscapes("`\\u2014`", (text) => text)).toEqual([
+        finding(1, 2, "\\u2014", EM_DASH),
+      ]);
+    });
+  });
 });
 
 describe("formatFinding", () => {
@@ -306,6 +393,85 @@ describe("run", () => {
       expect(io.writes).toEqual([]);
     });
   });
+
+  describe("code files", () => {
+    const UNPARSEABLE =
+      "a.ts: does not parse as JavaScript or TypeScript; comments not scanned";
+
+    it("reports an escape in a comment", () => {
+      const io = memoryIo({
+        "a.ts": Buffer.from("f(); // x \\u2014\n", "utf8"),
+      });
+
+      expect(run({ paths: ["a.ts"] }, io)).toEqual({
+        lines: [
+          `a.ts:1:11: literal escape \\u2014 (--fix writes U+2014 ${EM_DASH})`,
+        ],
+        exitCode: 1,
+      });
+    });
+
+    it("passes an escape in a string literal", () => {
+      const io = memoryIo({
+        "a.ts": Buffer.from('const s = "\\u2014";\n', "utf8"),
+      });
+
+      expect(run({ paths: ["a.ts"] }, io)).toEqual({ lines: [], exitCode: 0 });
+    });
+
+    it("masks each file by its own type", () => {
+      const io = memoryIo({
+        "a.md": Buffer.from('x "\\u2014"\n', "utf8"),
+        "b.mjs": Buffer.from('const s = "\\u2014";\n', "utf8"),
+      });
+
+      expect(run({ paths: ["a.md", "b.mjs"] }, io)).toEqual({
+        lines: [
+          `a.md:1:4: literal escape \\u2014 (--fix writes U+2014 ${EM_DASH})`,
+        ],
+        exitCode: 1,
+      });
+    });
+
+    it("fails on a file that does not parse", () => {
+      const io = memoryIo({
+        "a.ts": Buffer.from("const x = (; // \\u2014\n", "utf8"),
+      });
+
+      expect(run({ paths: ["a.ts"] }, io)).toEqual({
+        lines: [UNPARSEABLE],
+        exitCode: 1,
+      });
+    });
+
+    describe("with fix", () => {
+      it("decodes the comment and leaves the string literal", () => {
+        const io = memoryIo({
+          "a.ts": Buffer.from('const s = "\\u2014"; // \\u2014\n', "utf8"),
+        });
+
+        expect(run({ paths: ["a.ts"], fix: true }, io)).toEqual({
+          lines: ["decoded a.ts"],
+          exitCode: 0,
+        });
+        expect(io.files["a.ts"].toString("utf8")).toBe(
+          `const s = "\\u2014"; // ${EM_DASH}\n`,
+        );
+      });
+
+      it("does not rewrite a file that does not parse, and still fails", () => {
+        const io = memoryIo({
+          "a.ts": Buffer.from("const x = (; // \\u2014\n", "utf8"),
+        });
+
+        expect(run({ paths: ["a.ts"], fix: true }, io)).toEqual({
+          lines: [UNPARSEABLE],
+          exitCode: 1,
+        });
+        expect(io.writes).toEqual([]);
+      });
+    });
+  });
 });
 
 describe("repairUnicodeEscapes", () => {
@@ -322,6 +488,13 @@ describe("repairUnicodeEscapes", () => {
     ).toEqual({
       text: `${GRINNING_FACE}${EM_DASH} ${GRINNING_FACE} ${RIGHTWARDS_ARROW}.`,
       decoded: 4,
+    });
+  });
+
+  it("decodes whatever the given mask leaves visible", () => {
+    expect(repairUnicodeEscapes("`\\u2014`", (text) => text)).toEqual({
+      text: `\`${EM_DASH}\``,
+      decoded: 1,
     });
   });
 

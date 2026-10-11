@@ -50,6 +50,17 @@ export type ResumeOutcome =
   | { kind: "resumed"; record: Subagent }
   | { kind: "refused"; reason: ResumeRefusalReason };
 
+/**
+ * What starting a resume produced: the record now running it, or the reason
+ * nothing was started.
+ *
+ * The run itself continues on the record; its `promise` settles when the
+ * resumed run reaches a terminal state.
+ */
+export type ResumeStart =
+  | { kind: "started"; record: Subagent }
+  | { kind: "refused"; reason: ResumeRefusalReason };
+
 /** Per-call knobs for a resume; both doors pass their own. */
 export interface ResumeCallOptions {
   /** Cancels the resumed turn loop, through the record's own lever — so it ends like `abort(id)` does. */
@@ -399,15 +410,32 @@ export class SubagentManager {
    * subscription lifecycle.
    */
   async resume(id: string, prompt: string, options: ResumeCallOptions = {}): Promise<ResumeOutcome> {
+    const start = this.startResume(id, prompt, options);
+    if (start.kind === "refused") return start;
+    await start.record.promise;
+    return { kind: "resumed", record: start.record };
+  }
+
+  /**
+   * Start a resume without waiting for it: the door that returns before the
+   * resumed run ends. Refuses synchronously, for the same reasons `resume` does.
+   */
+  startResume(id: string, prompt: string, options: ResumeCallOptions = {}): ResumeStart {
     const agent = this.agents.get(id);
     if (!agent) return { kind: "refused", reason: "unknown-agent" };
     const refusal = agent.resumeRefusal;
     if (refusal) return { kind: "refused", reason: refusal };
     // Before the resume starts: resetForResume runs synchronously inside
     // resume(), so a claim taken afterwards would miss the terminal edge.
+    // Each resume's caller decides who carries this run's outcome; a claim a
+    // previous carrier left behind belongs to an outcome already delivered, and
+    // no carrier is live on a settled record.
     if (options.claimOutcome) agent.claim();
-    await agent.resume(prompt, options.signal);
-    return { kind: "resumed", record: agent };
+    else agent.releaseClaims();
+    // Published as agent.promise, which always resolves; it rejects only for a
+    // missing session, which resumeRefusal has already refused as no-session.
+    void agent.resume(prompt, options.signal);
+    return { kind: "started", record: agent };
   }
 
   getRecord(id: string): Subagent | undefined {

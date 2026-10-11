@@ -1,5 +1,5 @@
 ---
-status: accepted
+status: amended by 0012
 date: 2026-09-03
 ---
 
@@ -7,8 +7,9 @@ date: 2026-09-03
 
 ## Status
 
-Accepted.
-Closes Pi's overlay mount to this package until the upstream compositor changes.
+Accepted, and amended by [ADR 0012].
+Closes Pi's overlay mount to this package in regular mode until the upstream compositor changes.
+[ADR 0012] mounts the viewer as an overlay in fullscreen mode, where this defect cannot occur and a docked pane cannot receive PgUp/PgDn/Home/End.
 
 ## Context
 
@@ -221,6 +222,7 @@ control run without the overlay commits none.
 Repro script, public API only, no monorepo checkout needed: <attached>
 ```
 
+[ADR 0012]: 0012-fullscreen-viewer-is-an-overlay.md
 [#733]: https://github.com/gotgenes/pi-packages/issues/733
 [#864]: https://github.com/gotgenes/pi-packages/issues/864
 [#874]: https://github.com/gotgenes/pi-packages/issues/874

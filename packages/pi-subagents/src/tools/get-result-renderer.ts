@@ -9,7 +9,8 @@
  */
 
 import type { SubagentStatus } from "#src/lifecycle/subagent-state";
-import { renderStatusIcon } from "#src/tools/result-renderer";
+import type { TurnBudget } from "#src/lifecycle/turn-limits";
+import { renderOutcomeIcon } from "#src/tools/result-renderer";
 import type { Theme } from "#src/ui/display";
 import { GLYPHS } from "#src/ui/glyphs";
 
@@ -43,6 +44,8 @@ export interface GetResultDetails {
 	/** First non-empty line of the result body, clipped. Never the whole result. */
 	preview?: string;
 	error?: string;
+	/** The run's turn limit and its use; absent when no limit applied. */
+	turnBudget?: TurnBudget;
 	/** Whether the conversation was requested, so the expanded view can say where it went. */
 	verbose: boolean;
 	transcriptPath?: string;
@@ -69,7 +72,7 @@ export function renderGetResultLines(
 
 /** Status glyph and stats, then the description and either the preview or the error. */
 function renderCollapsedSummary(details: GetResultDetails, theme: Theme): string[] {
-	const lines = [`${renderStatusIcon(details.status, theme)} ${renderStats(details, theme)}`];
+	const lines = [`${renderOutcomeIcon(details, theme)} ${renderStats(details, theme)}`];
 	if (details.description) lines.push(subLine(details.description, "dim", theme));
 	if (details.error) {
 		lines.push(subLine(details.error, "error", theme));
@@ -101,7 +104,7 @@ function renderOverflowNotice(details: GetResultDetails, dropped: number): strin
 }
 
 /** The dim continuation line beneath the status line. */
-function subLine(text: string, color: string, theme: Theme): string {
+function subLine(text: string, color: Parameters<Theme["fg"]>[0], theme: Theme): string {
 	return theme.fg(color, `  ${GLYPHS.subLine}  ${text}`);
 }
 

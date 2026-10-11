@@ -15,15 +15,19 @@
 import type { Model } from "@earendil-works/pi-ai";
 import {
   type AgentSession,
+  type InlineExtension,
   type SettingsManager,
   type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import type { AgentConfigLookup } from "#src/config/agent-types";
+import { debugNote } from "#src/debug";
 import type { ChildLifecyclePublisher } from "#src/lifecycle/child-lifecycle";
 import type { ParentSnapshot } from "#src/lifecycle/parent-snapshot";
 import { SubagentSession } from "#src/lifecycle/subagent-session";
 import { AskParentTool, type QuestionRecorder } from "#src/session/ask-parent-tool";
+import { builtinExtensionsFor } from "#src/session/builtin-extensions";
 import type { EnvInfo } from "#src/session/env";
+import { expandMcpToolPatterns } from "#src/session/mcp-tool-patterns";
 import type { ModelRegistry } from "#src/session/model-resolver";
 import { NotifyParentTool, type UpdateAnnouncer } from "#src/session/notify-parent-tool";
 import { type AssemblerIO, assembleSessionConfig } from "#src/session/session-config";
@@ -70,6 +74,8 @@ export interface ResourceLoaderOptions {
   systemPromptOverride?: () => string;
   /** Override the append system prompt. Receives the current base value; return the replacement. */
   appendSystemPromptOverride?: (base: string[]) => string[];
+  /** Extensions supplied as code; `builtin` entries are Pi's built-ins, resolved as `builtin:<name>`. */
+  extensionFactories?: InlineExtension[];
 }
 
 /** Options passed to SessionFactoryIO.createSession. */
@@ -152,6 +158,11 @@ export interface SubagentSessionDeps {
    * reaches it in.
    */
   resolvePromptInheritance: (provider: string | undefined) => PromptInheritance;
+  /**
+   * Names of the tools the parent session has registered, read when a child is
+   * created. An agent's `mcp__<server>__*` tool patterns expand against them.
+   */
+  listParentToolNames: () => readonly string[];
 }
 
 /** Per-spawn parameters — the fields that vary per child session. */
@@ -229,12 +240,21 @@ export async function createSubagentSession(
     deps.io.assemblerIO,
   );
 
+  const { toolNames, unmatchedPatterns } = expandMcpToolPatterns(
+    cfg.toolNames,
+    deps.listParentToolNames(),
+  );
+  for (const pattern of unmatchedPatterns) {
+    debugNote(`agent ${type}: tools pattern ${pattern} matched no tool the parent has`);
+  }
+
   const agentDir = deps.io.getAgentDir();
   const sessionSettings = deps.io.createSettingsManager(cfg.effectiveCwd, agentDir);
   const loaderSettings = deps.io.createLoaderSettingsManager(sessionSettings);
 
   // Children inherit the parent's skills and every extension the composition
-  // root did not exclude (#696).
+  // root did not exclude (#696), plus the Pi built-ins their tools call for —
+  // Pi supplies those to its own CLI session only.
   //
   // Suppress AGENTS.md/CLAUDE.md and APPEND_SYSTEM.md - upstream's
   // buildSystemPrompt() re-appends both AFTER systemPromptOverride, which
@@ -250,6 +270,7 @@ export async function createSubagentSession(
     noContextFiles: true,
     systemPromptOverride: () => cfg.systemPrompt,
     appendSystemPromptOverride: () => [],
+    extensionFactories: builtinExtensionsFor(toolNames),
   });
   await loader.reload();
 
@@ -269,7 +290,7 @@ export async function createSubagentSession(
     settingsManager: sessionSettings,
     modelRegistry: snapshot.modelRegistry,
     model: cfg.model,
-    tools: [...cfg.toolNames, ...childTools.map((tool) => tool.name)],
+    tools: [...toolNames, ...childTools.map((tool) => tool.name)],
     customTools: childTools,
     excludeTools: EXCLUDED_TOOL_NAMES,
     resourceLoader: loader,

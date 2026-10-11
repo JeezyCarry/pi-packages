@@ -157,7 +157,7 @@ Identify dependency ordering and parallel tracks.
 If discovery surfaced no cause-level finding (Category A–C — structural fusion, coupling/boundary flaws, dead subsystems) and the candidate list is polish-only (Category B unit-size, Category D, Category E, Category G symptoms), do not manufacture a full phase — but split the "polish" verdict before defaulting to defer, using the craftsmanship scout's concentrated/scattered flags:
 
 - **Scattered trivia** (isolated findings across cold, low-churn files) → present **"defer"** as a first-class `ask_user` option.
-  This work belongs to the boy-scout rule in `/plan-issue`'s Tidy-First assessment (the `tidy-first` skill), which picks it up whenever a change touches those files, not a planned phase.
+  This work is not a planned phase; the Tidy-First assessment picks up only the lines a change touches, so a finding in a file a phase step edits rides that step instead (the `improvement-discovery` skill's grouping heuristics).
 - **Concentrated quality/test debt in a hot area** (3+ scout findings clustered in one churn hotspot or one oversized test file) → present a **"craftsmanship lean phase"** (spine: "pay down concentrated debt in `<area>`") as a first-class `ask_user` option alongside defer.
   This is legitimate Beck/Metz craftsmanship, not filler.
 
@@ -190,7 +190,7 @@ For an SDK **UI or behavioral** capability (not just "does this method exist"), 
 A step is identified by its GitHub issue number, so the issues are filed **before** the roadmap is written — there is no link-back pass and no second commit.
 Steps adopted from already-filed issues need no new issue; file only the steps without one, and when every step adopts an existing issue there is nothing to file at all.
 
-1. Load the `github-voice` skill, then file the issues **one `gh issue create --label "enhancement,pkg:$1"` call per issue**, with the title and `--body-file` paired literally in the same command — never via shell-array index arithmetic (the shell is zsh; its 1-indexed arrays silently shift titles relative to bodies).
+1. Load the `github-voice` skill, then file the issues **one `gh issue create --label "enhancement,pkg:$1"` call per issue**, with the title and `--body-file` paired literally in the same command — never via shell-array index arithmetic (an off-by-one in the index silently pairs a title with the wrong body).
    A `bug`-typed step keeps the `bug` label instead of `enhancement`.
    Run `gh` from the repo root (it must execute inside the repository).
    Use the repo's `## What` / `## Why` / `## Proposed change` / `## Context` sections.

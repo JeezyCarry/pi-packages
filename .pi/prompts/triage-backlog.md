@@ -293,17 +293,31 @@ The document contains:
    Follow it with the recommended disposition for each `out of scope` item (close as not-planned citing the non-goal, or redirect), and a **Carried forward** subsection recording the verdicts inherited from the prior run, the head SHA each PR verdict was taken against, and the outcome of any re-check.
 3. **The prioritized table** — the deliverable, carrying only `aligned`, `adjacent`, and `no charter` items:
 
-   | Rank | Item | Kind         | Severity | Why now                              |
-   | ---- | ---- | ------------ | -------- | ------------------------------------ |
-   | 1    | #639 | issue (ours) | keystone | Decides #671, #684, #680, #603, #604 |
+   | Rank | Item | Package(s)           | Kind         | Severity | Why now                              |
+   | ---- | ---- | -------------------- | ------------ | -------- | ------------------------------------ |
+   | 1    | #639 | pi-permission-system | issue (ours) | keystone | Decides #671, #684, #680, #603, #604 |
 
    Use `#N` bare (they auto-link on GitHub), mark third-party items, and keep `Why now` to one sentence.
+   The `Package(s)` column lets the reader pick items that can run in parallel: work on different packages parallelizes, work on the same package does not.
+   Name every package an item touches (the issue's `pkg:` labels, or the PR's changed `packages/<pkg>/` paths), comma-separated, without the `@gotgenes/` scope; write `repo` for a `scope:repo` item.
+   A row grouping several items lists the union of their packages.
    For an `adjacent` item, name the owning package or extension point there.
-4. **Keystones** — each keystone with its dependants listed by number.
-5. **Findings that changed a rank** — the verification results from Steps 4 and 5: stale greens, defects already fixed, flakes masking real failures, green-but-misaligned PRs.
-6. **CI and security audit** — the Step 3 audit outcome, and which runs were approved.
-7. **Blocked on others** — items waiting on a contributor (rebase, version confirmation, change requests) with how long they have waited.
-8. **Deferred** — what you consciously did not rank, and why, so the next run does not silently re-derive it.
+4. **Next item per package** — the prioritized table regrouped into parallel lanes, one row per package with at least one ranked item:
+
+   | Package              | Next          | Then        | Command               |
+   | -------------------- | ------------- | ----------- | --------------------- |
+   | pi-permission-system | #1001 (1)     | #997 (2)    | `/plan-issue #1001`   |
+   | pi-subagents         | #1008 (8)     | #987 (9)    | `/plan-issue #1008`   |
+
+   `Next` is the lane's highest-ranked actionable item, with its global rank in parentheses; `Then` is the one after it.
+   Skip items waiting on someone else (see Blocked on others) and items whose disposition is only a reply or a close — a lane is work a session can start.
+   An item spanning several packages occupies every lane it names: list it in each and say so (`#722 (21, also pi-subagents)`), because running it blocks all of them.
+   Order the rows by their `Next` item's global rank, and use `repo` as the lane for `scope:repo` items.
+5. **Keystones** — each keystone with its dependants listed by number.
+6. **Findings that changed a rank** — the verification results from Steps 4 and 5: stale greens, defects already fixed, flakes masking real failures, green-but-misaligned PRs.
+7. **CI and security audit** — the Step 3 audit outcome, and which runs were approved.
+8. **Blocked on others** — items waiting on a contributor (rebase, version confirmation, change requests) with how long they have waited.
+9. **Deferred** — what you consciously did not rank, and why, so the next run does not silently re-derive it.
    An `out of scope` item is not deferred — it belongs to the Scope alignment section, with a disposition rather than a rationale for waiting.
 
 Then present a short summary in the session and commit:
@@ -318,4 +332,5 @@ Do not push; leave that to the user.
 ## Finally
 
 Recommend the single next action and the command to run for it — usually `/plan-issue #N` for the top-ranked issue, or `/pr-review #N` for the top-ranked PR.
+Then name the `Next` item of each other lane as what a parallel session could start, pointing at the Next item per package table rather than repeating it.
 Stop there.

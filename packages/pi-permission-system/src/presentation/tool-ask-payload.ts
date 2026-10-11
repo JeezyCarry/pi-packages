@@ -1,4 +1,8 @@
-import { classifyToolKind, isMcpCheck } from "#src/access-intent/tool-kind";
+import {
+  classifyToolKind,
+  isMcpCheck,
+  isProxyMcpCheck,
+} from "#src/access-intent/tool-kind";
 import type { ToolPreviewFormatter } from "#src/tool-input/tool-preview-formatter";
 import type { PermissionCheckResult } from "#src/types";
 import { getNonEmptyString, toRecord } from "#src/value-guards";
@@ -40,12 +44,13 @@ export function buildToolAskPayload(facts: ToolAskFacts): PromptPayload {
       invokedToolName: distinctInvokedName(facts),
       value: askValue(check, bash, mcp),
       matchedPattern: check.matchedPattern ?? null,
+      matchedSpelling: check.matchedSpelling ?? null,
       commandContext: check.commandContext ?? null,
       executedUnit: check.executedUnit ?? null,
     },
     evidence: bash
       ? [...reasonEvidence(facts), ...fullCommandEvidence(facts)]
-      : inputPreviewEvidence(facts, mcp),
+      : inputPreviewEvidence(facts, isProxyMcpCheck(check)),
     annotations: [],
   };
 }
@@ -94,15 +99,16 @@ function reasonEvidence(facts: ToolAskFacts): PromptEvidence[] {
 /**
  * The per-tool input preview, when a formatter is registered and produces one.
  *
- * An MCP ask previews under the `mcp` key rather than the qualified target, so
- * a registered MCP formatter is consulted for every server.
+ * A proxied MCP ask previews under the `mcp` key rather than the qualified
+ * target, so a registered MCP formatter is consulted for every server. A Pi
+ * MCP tool's input is its own arguments, so it previews under its own name.
  */
 function inputPreviewEvidence(
   facts: ToolAskFacts,
-  mcp: boolean,
+  proxyMcp: boolean,
 ): PromptEvidence[] {
   const preview = facts.formatter?.formatToolInputForPrompt(
-    mcp ? "mcp" : facts.check.toolName,
+    proxyMcp ? "mcp" : facts.check.toolName,
     facts.input,
   );
   return preview ? [{ label: "input", text: preview, detail: null }] : [];

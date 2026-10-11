@@ -36,18 +36,12 @@ Facts about this environment that no model could infer.
 
 ### Shell
 
-The `bash` tool runs zsh.
-Quote a glob pattern meant for a command rather than the shell — `--include='*.ts'`, `find . -name '*.ts'`.
-Unquoted, it expands against the cwd first: bash silently substitutes a matched filename, and zsh aborts with `no matches found`.
-In zsh an unquoted parameter is not word-split, so `perl -pi -e '…' $FILES` passes the whole list as a single filename — spell a multi-file list inline.
-Do not start a bash word with `=` — zsh's `equals` expansion reads `=word` as a command-path lookup, aborts, and discards the rest of an `A; B; C` chain; use `echo ---`, not `echo ===`.
-When a shell loop or script needs a status variable, do not name it `status` — zsh reserves `$status` (an alias for `$?`) as read-only, so the assignment aborts with `read-only variable: status`; use `state`/`rc` instead.
 Two prose tripwires are now `pi-permission-system` deny rules in `.pi/extensions/pi-permission-system/config.json` (`rg -r`, `git commit -F` from a heredoc); the reason string says what to do instead.
 
 ### Tooling
 
 This project uses **pnpm** exclusively — never `npm` or `npx`.
-A `commit-msg` hook (`committed`, via `prek`) rejects a malformed Conventional Commits header; pre-commit hooks reject stray invisible characters, decode literal Unicode escapes in markdown prose, and run Biome, ESLint, and `rumdl fmt`.
+A `commit-msg` hook (`committed`, via `prek`) rejects a malformed Conventional Commits header; pre-commit hooks reject stray invisible characters, decode literal Unicode escapes in markdown prose and code comments, and run Biome, ESLint, and `rumdl fmt`.
 Use `colgrep` for intent-based codebase exploration and convention discovery; use `grep` for exact symbol matching.
 Pi's own source is checked out beside this repo (`../pi` from the root, `../../pi` from a worktree) and tracks Pi's `main`, ahead of the pinned dependency.
 
@@ -62,6 +56,10 @@ It also reflows what you just wrote (line wrapping, quote style), so an `oldText
 
 A slash command's expanded body is a snapshot from when the Pi process loaded it — so after this session edits a `.pi/prompts/*.md` template, a later same-process invocation of that command can run the **pre-edit** copy.
 When the pasted prompt body contradicts the on-disk file (e.g. you just changed `/ship` and its steps read stale), treat the **on-disk file as authoritative** and follow it, not the injected text.
+
+### Stale skill bodies
+
+A skill read earlier in the session is a snapshot; after a `git pull` that changed `.pi/skills/`, re-read it before following it, even where a prompt says to skip skills already loaded.
 
 ### Stale in-process extension code
 

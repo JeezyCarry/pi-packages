@@ -14,6 +14,12 @@ interface PathAskFacts {
   toolName: string;
   /** The path as the caller typed it — what the user recognizes. */
   pathValue: string;
+  /**
+   * Where the typed path lands when that is somewhere else: its symlink
+   * target, or the file a built-in tool's resolver opens for a rewritten
+   * spelling.
+   */
+  resolvedPath?: string;
   agentName: string | null;
   matchedPattern?: string;
   /**
@@ -28,13 +34,11 @@ interface PathAskFacts {
 
 /** A tool ask gated by an explicit `path`-family rule. */
 export function buildPathAskPayload(facts: PathAskFacts): PromptPayload {
-  return pathPayload("path", facts, []);
+  return pathPayload("path", facts, resolvedAliasEvidence(facts.resolvedPath));
 }
 
-/** The facts the external-directory gate adds: the boundary and the alias. */
+/** The facts the external-directory gate adds: the boundary. */
 interface ExternalDirectoryAskFacts extends PathAskFacts {
-  /** The canonical location, when it names somewhere other than the typed path. */
-  resolvedPath?: string;
   /** The working directory the path escapes. */
   cwd: string;
 }
@@ -82,6 +86,7 @@ export function buildBashExternalDirectoryAskPayload(
       value: facts.command,
       matchedPattern: facts.matchedPattern ?? null,
       commandContext: null,
+      matchedSpelling: null,
       executedUnit: null,
     },
     evidence: [
@@ -114,6 +119,7 @@ function pathPayload(
       value: facts.pathValue,
       matchedPattern: facts.matchedPattern ?? null,
       commandContext: null,
+      matchedSpelling: null,
       executedUnit: null,
     },
     evidence: [...reasonEvidence(facts.reason), ...evidence],

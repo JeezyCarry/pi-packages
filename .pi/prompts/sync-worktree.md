@@ -20,6 +20,8 @@ Load the `worktrees` and `git-workflow` skills before step 1 — the rebase rule
 1. Run `git branch --show-current`.
 2. If the branch is `main` (or not an `issue-$1-*` branch), stop and report — this is the trunk flow's job; run `/ship $1` from the root instead.
 3. Only proceed on an `issue-$1-<slug>` branch.
+4. Read the retro file's latest stage entry.
+   If it records a reviewer WARN or an operator decision still open, settle it with the operator (`ask_user`) and commit the result here before step 2 — syncing past it only moves the stop to `/ship`.
 
 ## 2. Pre-push checks
 
@@ -45,7 +47,7 @@ The stage note lives in an `exclude-paths` dir, so it triggers no release — bu
 
    (Equivalently, the root can call `list_session_files({ cwd: "<this worktree path>" })` and pick the newest entry — the `sed` one-liner above is just this peer session capturing its own path inline.) This capture is optional — if the command stalls or fails, record the path as unknown and proceed; the root recovers it via `list_session_files`.
    Do not re-run the already-green pre-push gates (step 2) on a stall here.
-3. Append a stage entry (anchor the `Edit` on the file's last line — the repeated `### Observations` headers make header-anchored edits ambiguous).
+3. Append a stage entry with the `Edit` tool, never `cat >>` or a heredoc (anchor the `Edit` on the file's last line — the repeated `### Observations` headers make header-anchored edits ambiguous).
    Do not cite a branch commit SHA in this note — step 4's rebase rewrites every one, leaving a dangling citation on `main`.
    Name the commit by its subject instead.
    On a re-run — the branch was already synced and `main` moved — append a dated line to the existing entry rather than a second `## Stage: Sync (worktree)` block.
@@ -74,7 +76,7 @@ The stage note lives in an `exclude-paths` dir, so it triggers no release — bu
 3. On a conflict: run `git rebase --abort`, then stop and report the conflicting files.
    Name what actually collided — `git log --oneline HEAD..main` for the commits, and the conflicting hunks — not a cause inferred from the file's recent history.
    Do not auto-resolve — the operator decides.
-   One exception: when both sides *only add* distinct `[#N]:` link-definition lines and no line was edited on both sides, keep every line, order them ascending by number, and continue with `GIT_EDITOR=true git rebase --continue`.
+   One exception: when both sides *only add* distinct lines — `[#N]:` link definitions, or bullets in a roadmap's `#### Open-issue sweep dispositions` list — and no line was edited on both sides, keep every line (definitions ascending by number, bullets with `main`'s first) and continue with `GIT_EDITOR=true git rebase --continue`.
    That collision has one correct resolution and needs no operator decision.
    Any other conflict — including one where a definition's URL differs — still aborts and stops.
 4. Verify the merge will succeed: `git merge-base --is-ancestor main HEAD`.
@@ -105,5 +107,5 @@ Report:
 
 - Never touch `main` from a worktree (no checkout, no merge, no push to `main`).
 - Never force-push.
-- If the rebase conflicts, stop — do not resolve automatically, except the add-only `[#N]:` link-definition case in step 3.
+- If the rebase conflicts, stop — do not resolve automatically, except the add-only link-definition and sweep-bullet cases in step 3.
 - Do not close the issue or dispatch a release here; that is the root half's job (`/ship`).

@@ -80,6 +80,7 @@ function makePi() {
       appendEntry: vi.fn(),
       sendMessage: vi.fn(),
       exec: vi.fn(),
+      getAllTools: vi.fn((): { name: string }[] => []),
     } as any,
     tools,
     handlers,
@@ -460,5 +461,29 @@ describe("composition root: prompt-inheritance wiring", () => {
         `<project_instructions path="${join(workspace, "AGENTS.md")}">`,
       );
     });
+  });
+});
+
+describe("composition root: parent tool list", () => {
+  it("reads the parent's registered tools when a child asks, not when the extension loads", async () => {
+    vi.mocked(createSubagentSession).mockClear();
+    vi.mocked(createSubagentSession).mockResolvedValue(
+      toSubagentSession(createSubagentSessionStub(createMockSession(), "/sessions/child.jsonl")),
+    );
+    const { pi, tools, fire } = makePi();
+    subagentsExtension(pi);
+    await fire("session_start", {}, makeSessionStartCtx(makeParentRegistry().registry, makeRecordingUI()));
+    await tools.get("subagent").execute(
+      "tool-call-1",
+      { prompt: "hi", description: "child", subagent_type: "general-purpose", run_in_background: true },
+      undefined,
+      undefined,
+    );
+    const [, deps] = vi.mocked(createSubagentSession).mock.calls[0];
+
+    // An MCP server connects in the background, so its tools register after load.
+    vi.mocked(pi.getAllTools).mockReturnValue([{ name: "read" }, { name: "mcp__github__get_issue" }]);
+
+    expect(deps.listParentToolNames()).toEqual(["read", "mcp__github__get_issue"]);
   });
 });

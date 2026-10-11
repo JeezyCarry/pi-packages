@@ -9,17 +9,23 @@ import type {
 	ResumeCallOptions,
 	ResumeOutcome,
 	ResumeRefusalReason,
+	ResumeStart,
 } from "#src/lifecycle/subagent-manager";
 import {
 	renderOutcomeAddenda,
 	renderOutcomeBody,
 	renderStatusNote,
 } from "#src/observation/outcome-delivery";
-import { spawnBackground } from "#src/tools/background-spawner";
+import { renderBackgroundLaunch, spawnBackground } from "#src/tools/background-spawner";
 import { runForeground } from "#src/tools/foreground-runner";
 import { buildAgentGuidelines, buildDetails, buildTypeListText, textResult } from "#src/tools/helpers";
 import { renderAgentResult } from "#src/tools/result-renderer";
-import { type ModelInfo, resolveSpawnConfig, type SpawnPresentation } from "#src/tools/spawn-config";
+import {
+	type ModelInfo,
+	type ResolvedSpawnConfig,
+	resolveSpawnConfig,
+	type SpawnPresentation,
+} from "#src/tools/spawn-config";
 import type { ParentSessionInfo, Subagent } from "#src/types";
 import { type AgentDetails, getDisplayName, type Theme } from "#src/ui/display";
 import { GLYPHS } from "#src/ui/glyphs";
@@ -31,6 +37,7 @@ export interface AgentToolManager {
 	spawn: (snapshot: ParentSnapshot, type: string, prompt: string, opts: AgentSpawnConfig) => string;
 	spawnAndWait: (snapshot: ParentSnapshot, type: string, prompt: string, opts: Omit<AgentSpawnConfig, "background">) => Promise<Subagent>;
 	resume: (id: string, prompt: string, options: ResumeCallOptions) => Promise<ResumeOutcome>;
+	startResume: (id: string, prompt: string, options: ResumeCallOptions) => ResumeStart;
 	getRecord: (id: string) => Subagent | undefined;
 }
 
@@ -92,12 +99,14 @@ export class AgentTool {
 
 		// ---- Resume existing agent ----
 		if (params.resume) {
-			return this.resumeExisting(
-				params.resume as string,
-				params.prompt as string,
-				signal,
-				config.presentation.detailBase,
-			);
+			const id = params.resume as string;
+			const prompt = params.prompt as string;
+			// Only the caller's explicit flag: an agent file's run_in_background
+			// default describes how that type spawns, not how a resume is collected.
+			if (params.run_in_background === true) {
+				return this.resumeInBackground(id, prompt, config);
+			}
+			return this.resumeExisting(id, prompt, signal, config.presentation.detailBase);
 		}
 
 		// ---- Background execution ----
@@ -141,11 +150,31 @@ export class AgentTool {
 		// Resume-return delivery edge: the resumed outcome is returned directly.
 		record.markConsumed();
 		return textResult(
-			`Agent ID: ${record.id}${renderStatusNote(record.status)}\n\n` +
+			`Agent ID: ${record.id}${renderStatusNote(record)}\n\n` +
 				renderOutcomeBody(record) +
 				renderOutcomeAddenda(record),
 			buildDetails(detailBase, record),
 		);
+	}
+
+	/**
+	 * Start an existing agent's resume and return at once; the completion notice
+	 * delivers its outcome. Nothing claims the outcome and no tool-call signal is
+	 * wired, as for a background spawn.
+	 */
+	private resumeInBackground(id: string, prompt: string, config: ResolvedSpawnConfig) {
+		const start = this.manager.startResume(id, prompt, {});
+		if (start.kind === "refused") {
+			return textResult(resumeRefusalMessage(start.reason, id));
+		}
+		return renderBackgroundLaunch({
+			headline: "Agent resumed in background.",
+			id: start.record.id,
+			displayName: config.identity.displayName,
+			description: config.execution.description,
+			detailBase: config.presentation.detailBase,
+			outputFile: start.record.outputFile,
+		});
 	}
 
 	toToolDefinition() {
@@ -218,7 +247,8 @@ ${guidelines}
 				),
 				resume: Type.Optional(
 					Type.String({
-						description: "Optional agent ID to resume from. Continues from previous context.",
+						description:
+							"Optional agent ID to resume from. Continues from previous context. Combine with run_in_background: true to resume without waiting.",
 					}),
 				),
 				inherit_context: Type.Optional(

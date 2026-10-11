@@ -2,6 +2,7 @@ import type { AgentSession } from "@earendil-works/pi-coding-agent";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { SubagentSession } from "#src/lifecycle/subagent-session";
 import { createChildLifecycleMock } from "#test/helpers/subagent-session-io";
+import { childCompletedEvent } from "#test/helpers/turn-loop-result";
 
 // ── Session mock factory ───────────────────────────────────────────────────────
 
@@ -32,6 +33,7 @@ function createSession(finalText: string) {
     }),
     abort: vi.fn(),
     steer: vi.fn().mockResolvedValue(undefined),
+    sendCustomMessage: vi.fn((_message: unknown, _options?: { triggerTurn?: boolean }): Promise<void> => Promise.resolve()),
     dispose: vi.fn(() => {
       calls.push("dispose");
     }),
@@ -58,23 +60,49 @@ function emit(listeners: Array<(e: any) => void>, event: unknown) {
   for (const l of listeners) l(event);
 }
 
-function emitTurnEnd(listeners: Array<(e: any) => void>) {
-  emit(listeners, { type: "turn_end" });
+/**
+ * How one turn ended, as Pi's `turn_end` reports it: the assistant message's
+ * `stopReason` and how many tool results the turn produced. The default is a
+ * successful turn that ran a tool, so the agent loop would continue.
+ */
+interface TurnSpec {
+  stopReason?: string;
+  toolResults?: number;
+}
+
+function emitTurnStart(listeners: Array<(e: any) => void>) {
+  emit(listeners, { type: "turn_start" });
+}
+
+function emitTurnEnd(listeners: Array<(e: any) => void>, { stopReason = "toolUse", toolResults = 1 }: TurnSpec = {}) {
+  emit(listeners, {
+    type: "turn_end",
+    message: { role: "assistant", stopReason },
+    toolResults: Array.from({ length: toolResults }, () => ({ role: "toolResult" })),
+  });
 }
 
 /**
- * Program session.prompt to emit `turns` turn_end events, then settle the run
- * with a final assistant message. The turn count is the meaningful input that
- * drives the steer/abort boundary each turn-limit test asserts on.
+ * Program session.prompt to run turns, each a `turn_start` then a `turn_end`,
+ * then settle the run with a final assistant message. A number runs that many
+ * default turns; an array spells out how each turn ended. The turns are the
+ * meaningful input that drives the boundary each turn-limit test asserts on.
+ *
+ * A session abort ends the run the way Pi's does: no further turn completes.
  */
 function programTurns(
   session: ReturnType<typeof createSession>["session"],
   listeners: ReturnType<typeof createSession>["listeners"],
-  turns: number,
+  turns: number | TurnSpec[],
   finalText = "done",
 ) {
+  const specs = typeof turns === "number" ? Array.from({ length: turns }, (): TurnSpec => ({})) : turns;
   session.prompt = vi.fn(async () => {
-    for (let i = 0; i < turns; i++) emitTurnEnd(listeners);
+    for (const spec of specs) {
+      if (session.abort.mock.calls.length > 0) break;
+      emitTurnStart(listeners);
+      emitTurnEnd(listeners, spec);
+    }
     session.messages.push({ role: "assistant", content: [{ type: "text", text: finalText }] });
   });
 }
@@ -252,53 +280,138 @@ describe("SubagentSession — runTurnLoop response capture", () => {
   });
 });
 
-describe("SubagentSession — runTurnLoop turn limits", () => {
-  it("steers at the soft limit and aborts after the grace window", async () => {
-    const { session, listeners } = createSession("done");
-    programTurns(session, listeners, 3);
-    const { sub } = makeSubagentSession(session);
-    const result = await sub.runTurnLoop("go", { maxTurns: 2, graceTurns: 1 });
-    expect(session.steer).toHaveBeenCalledWith(expect.stringContaining("turn limit"));
-    expect(session.abort).toHaveBeenCalled();
-    expect(result.aborted).toBe(true);
-    expect(result.steered).toBe(true);
+describe("SubagentSession — runTurnLoop turn budget", () => {
+  describe("ceiling", () => {
+    it("stops the run after the ceiling turn when that turn ran tools", async () => {
+      const { session, listeners } = createSession("done");
+      programTurns(session, listeners, 5);
+      const { sub } = makeSubagentSession(session);
+      const result = await sub.runTurnLoop("go", { maxTurns: 3, wrapUpTurns: 1 });
+      expect(session.abort).toHaveBeenCalledOnce();
+      expect(result.turnBudget).toEqual({ maxTurns: 3, used: 3, phase: "exhausted" });
+    });
+
+    it("lets a final answer on the ceiling turn end the run without a stop", async () => {
+      const { session, listeners } = createSession("done");
+      programTurns(session, listeners, [{}, {}, { stopReason: "stop", toolResults: 0 }]);
+      const { sub } = makeSubagentSession(session);
+      const result = await sub.runTurnLoop("go", { maxTurns: 3, wrapUpTurns: 1 });
+      expect(session.abort).not.toHaveBeenCalled();
+      expect(result.turnBudget).toEqual({ maxTurns: 3, used: 3, phase: "warned" });
+    });
+
+    it("stops a turn that starts past the ceiling", async () => {
+      const { session, listeners } = createSession("done");
+      // The ceiling turn answered, yet another turn starts (a steer queued on it).
+      session.prompt = vi.fn(async () => {
+        emitTurnStart(listeners);
+        emitTurnEnd(listeners);
+        emitTurnStart(listeners);
+        emitTurnEnd(listeners, { stopReason: "stop", toolResults: 0 });
+        emitTurnStart(listeners);
+      });
+      const { sub } = makeSubagentSession(session);
+      const result = await sub.runTurnLoop("go", { maxTurns: 2, wrapUpTurns: 1 });
+      expect(session.abort).toHaveBeenCalledOnce();
+      expect(result.turnBudget).toEqual({ maxTurns: 2, used: 2, phase: "exhausted" });
+    });
+
+    it("does not count a turn whose response errored", async () => {
+      const { session, listeners } = createSession("done");
+      programTurns(session, listeners, [{}, { stopReason: "error", toolResults: 0 }, { stopReason: "stop", toolResults: 0 }]);
+      const { sub } = makeSubagentSession(session);
+      const result = await sub.runTurnLoop("go", { maxTurns: 5, wrapUpTurns: 1 });
+      expect(result.turnBudget).toEqual({ maxTurns: 5, used: 2, phase: "within" });
+    });
   });
 
-  it("graceTurns extends the window so a finishing agent is not aborted", async () => {
-    const { session, listeners } = createSession("done");
-    programTurns(session, listeners, 3);
-    const { sub } = makeSubagentSession(session);
-    const result = await sub.runTurnLoop("go", { maxTurns: 1, graceTurns: 3 });
-    expect(result.steered).toBe(true);
-    expect(result.aborted).toBe(false);
-    expect(session.abort).not.toHaveBeenCalled();
+  describe("warning", () => {
+    it("warns with a context-only message once wrapUpTurns turns remain, never through a steer", async () => {
+      const { session, listeners } = createSession("done");
+      programTurns(session, listeners, [{}, {}, {}, { stopReason: "stop", toolResults: 0 }]);
+      const { sub } = makeSubagentSession(session);
+      const result = await sub.runTurnLoop("go", { maxTurns: 5, wrapUpTurns: 2 });
+      expect(session.sendCustomMessage).toHaveBeenCalledOnce();
+      expect(session.sendCustomMessage).toHaveBeenCalledWith(
+        {
+          customType: "subagents:turn-budget-warning",
+          content:
+            "Turn budget: you have 2 turns left, including this one. The harness stops you after that. Finish your work and give your final answer within that budget.",
+          display: true,
+        },
+        { triggerTurn: false },
+      );
+      expect(session.steer).not.toHaveBeenCalled();
+      expect(result.turnBudget).toEqual({ maxTurns: 5, used: 4, phase: "warned" });
+    });
+
+    it("states the budget before the first turn when every turn is a wrap-up turn", async () => {
+      const { session, listeners } = createSession("done");
+      programTurns(session, listeners, [{ stopReason: "stop", toolResults: 0 }]);
+      session.prompt.mockImplementationOnce(async () => {
+        expect(session.sendCustomMessage).toHaveBeenCalledOnce();
+        emitTurnStart(listeners);
+        emitTurnEnd(listeners, { stopReason: "stop", toolResults: 0 });
+      });
+      const { sub } = makeSubagentSession(session);
+      const result = await sub.runTurnLoop("go", { maxTurns: 2, wrapUpTurns: 2 });
+      expect(session.sendCustomMessage).toHaveBeenCalledWith(
+        expect.objectContaining({ content: expect.stringContaining("you have 2 turns left") }),
+        { triggerTurn: false },
+      );
+      expect(result.turnBudget).toEqual({ maxTurns: 2, used: 1, phase: "warned" });
+    });
   });
 
-  it("per-call maxTurns takes precedence over agentMaxTurns and defaultMaxTurns", async () => {
-    const { session, listeners } = createSession("done");
-    programTurns(session, listeners, 2);
-    const { sub } = makeSubagentSession(session, { agentMaxTurns: 1 });
-    await sub.runTurnLoop("go", { maxTurns: 3, defaultMaxTurns: 1, graceTurns: 1 });
-    expect(session.steer).not.toHaveBeenCalled();
-    expect(session.abort).not.toHaveBeenCalled();
+  describe("reporting", () => {
+    it("reports the budget before the first turn and after each turn", async () => {
+      const { session, listeners } = createSession("done");
+      programTurns(session, listeners, 2);
+      const { sub } = makeSubagentSession(session);
+      const reports: unknown[] = [];
+      await sub.runTurnLoop("go", { maxTurns: 4, wrapUpTurns: 2, onTurnBudget: (budget) => reports.push(budget) });
+      expect(reports).toEqual([
+        { maxTurns: 4, used: 0, phase: "within" },
+        { maxTurns: 4, used: 1, phase: "within" },
+        { maxTurns: 4, used: 2, phase: "warned" },
+      ]);
+    });
+
+    it("counts an unlimited run's turns without warning or stopping it", async () => {
+      const { session, listeners } = createSession("done");
+      programTurns(session, listeners, 4);
+      const { sub } = makeSubagentSession(session);
+      const result = await sub.runTurnLoop("go", {});
+      expect(result.turnBudget).toEqual({ used: 4, phase: "within" });
+      expect(session.sendCustomMessage).not.toHaveBeenCalled();
+      expect(session.abort).not.toHaveBeenCalled();
+    });
   });
 
-  it("falls back to agentMaxTurns when no per-call maxTurns is set", async () => {
-    const { session, listeners } = createSession("done");
-    programTurns(session, listeners, 1);
-    const { sub } = makeSubagentSession(session, { agentMaxTurns: 1 });
-    const result = await sub.runTurnLoop("go", { defaultMaxTurns: 9 });
-    expect(session.steer).toHaveBeenCalledWith(expect.stringContaining("turn limit"));
-    expect(result.steered).toBe(true);
-  });
+  describe("limit precedence", () => {
+    it("per-call maxTurns takes precedence over agentMaxTurns and defaultMaxTurns", async () => {
+      const { session, listeners } = createSession("done");
+      programTurns(session, listeners, 1);
+      const { sub } = makeSubagentSession(session, { agentMaxTurns: 7 });
+      const result = await sub.runTurnLoop("go", { maxTurns: 3, defaultMaxTurns: 9 });
+      expect(result.turnBudget.maxTurns).toBe(3);
+    });
 
-  it("falls back to defaultMaxTurns when neither per-call nor agentMaxTurns is set", async () => {
-    const { session, listeners } = createSession("done");
-    programTurns(session, listeners, 1);
-    const { sub } = makeSubagentSession(session);
-    const result = await sub.runTurnLoop("go", { defaultMaxTurns: 1, graceTurns: 5 });
-    expect(session.steer).toHaveBeenCalledWith(expect.stringContaining("turn limit"));
-    expect(result.steered).toBe(true);
+    it("falls back to agentMaxTurns when no per-call maxTurns is set", async () => {
+      const { session, listeners } = createSession("done");
+      programTurns(session, listeners, 1);
+      const { sub } = makeSubagentSession(session, { agentMaxTurns: 7 });
+      const result = await sub.runTurnLoop("go", { defaultMaxTurns: 9 });
+      expect(result.turnBudget.maxTurns).toBe(7);
+    });
+
+    it("falls back to defaultMaxTurns when neither per-call nor agentMaxTurns is set", async () => {
+      const { session, listeners } = createSession("done");
+      programTurns(session, listeners, 1);
+      const { sub } = makeSubagentSession(session);
+      const result = await sub.runTurnLoop("go", { defaultMaxTurns: 9 });
+      expect(result.turnBudget.maxTurns).toBe(9);
+    });
   });
 });
 
@@ -335,11 +448,20 @@ describe("SubagentSession — runTurnLoop lifecycle events", () => {
     const { sub } = makeSubagentSession(session, { sessionDir: "/d", agentName: "Explore", lifecycle });
     await sub.runTurnLoop("go", {});
     expect(lifecycle.completed).toHaveBeenCalledOnce();
+    expect(lifecycle.completed).toHaveBeenCalledWith(
+      childCompletedEvent({ sessionDir: "/d", agentName: "Explore", turnBudget: { used: 0, phase: "within" } }),
+    );
+  });
+
+  it("emits completed with the run's turn budget and no turn-limit flags", async () => {
+    const { session, listeners } = createSession("done");
+    programTurns(session, listeners, 3);
+    const { sub } = makeSubagentSession(session, { sessionDir: "/d", agentName: "Explore", lifecycle });
+    await sub.runTurnLoop("go", { maxTurns: 5, wrapUpTurns: 2 });
     expect(lifecycle.completed).toHaveBeenCalledWith({
       sessionDir: "/d",
       agentName: "Explore",
-      aborted: false,
-      steered: false,
+      turnBudget: { maxTurns: 5, used: 3, phase: "warned" },
     });
   });
 
@@ -473,15 +595,15 @@ describe("SubagentSession — resumeTurnLoop", () => {
   it("re-prompts the session and returns the final assistant text", async () => {
     const { session } = createSession("RESUMED");
     const { sub } = makeSubagentSession(session);
-    const text = await sub.resumeTurnLoop("Continue");
+    const result = await sub.resumeTurnLoop("Continue", {});
     expect(session.prompt).toHaveBeenCalledWith("Continue");
-    expect(text).toBe("RESUMED");
+    expect(result).toEqual({ responseText: "RESUMED", turnBudget: { used: 0, phase: "within" } });
   });
 
   it("does not emit completed or disposed", async () => {
     const { session } = createSession("RESUMED");
     const { sub } = makeSubagentSession(session, { lifecycle });
-    await sub.resumeTurnLoop("Continue");
+    await sub.resumeTurnLoop("Continue", {});
     expect(lifecycle.completed).not.toHaveBeenCalled();
     expect(lifecycle.disposed).not.toHaveBeenCalled();
   });
@@ -493,7 +615,7 @@ describe("SubagentSession — resumeTurnLoop", () => {
     const { session, listeners } = createSession("unused");
     programMessages(session, listeners, [providerErrorMessage("401 invalid api key")]);
     const { sub } = makeSubagentSession(session);
-    await expect(sub.resumeTurnLoop("Continue")).rejects.toThrow("401 invalid api key");
+    await expect(sub.resumeTurnLoop("Continue", {})).rejects.toThrow("401 invalid api key");
   });
 
   it("does not report an earlier turn's text as the resumed answer", async () => {
@@ -505,7 +627,7 @@ describe("SubagentSession — resumeTurnLoop", () => {
     });
     programMessages(session, listeners, [providerErrorMessage("stream disconnected")]);
     const { sub } = makeSubagentSession(session);
-    await expect(sub.resumeTurnLoop("Continue")).rejects.toThrow("stream disconnected");
+    await expect(sub.resumeTurnLoop("Continue", {})).rejects.toThrow("stream disconnected");
   });
 
   it("rejects when overflow recovery stripped the resumed turn's error", async () => {
@@ -517,7 +639,7 @@ describe("SubagentSession — resumeTurnLoop", () => {
     });
     programStrippedFailure(session, listeners, "503 upstream unavailable");
     const { sub } = makeSubagentSession(session);
-    await expect(sub.resumeTurnLoop("Continue")).rejects.toThrow("503 upstream unavailable");
+    await expect(sub.resumeTurnLoop("Continue", {})).rejects.toThrow("503 upstream unavailable");
   });
 
   // `AgentSession.prompt()` resolves without running a turn when an extension
@@ -530,7 +652,7 @@ describe("SubagentSession — resumeTurnLoop", () => {
     session.messages.push(providerErrorMessage("429 rate limit exceeded"));
     session.prompt = vi.fn(async () => {});
     const { sub } = makeSubagentSession(session);
-    await expect(sub.resumeTurnLoop("/skill:audit go")).rejects.toThrow(
+    await expect(sub.resumeTurnLoop("/skill:audit go", {})).rejects.toThrow(
       "429 rate limit exceeded",
     );
   });
@@ -551,7 +673,7 @@ describe("SubagentSession — resumeTurnLoop", () => {
     await expect(sub.runTurnLoop("go", {})).rejects.toThrow("prompt is too long");
 
     session.prompt = vi.fn(async () => {});
-    await expect(sub.resumeTurnLoop("/skill:audit go")).rejects.toThrow("prompt is too long");
+    await expect(sub.resumeTurnLoop("/skill:audit go", {})).rejects.toThrow("prompt is too long");
   });
 
   it("resolves when the resume's own turn succeeded after an earlier failure", async () => {
@@ -561,13 +683,43 @@ describe("SubagentSession — resumeTurnLoop", () => {
       { role: "assistant", content: [{ type: "text", text: "the second answer" }], stopReason: "stop" },
     ]);
     const { sub } = makeSubagentSession(session);
-    await expect(sub.resumeTurnLoop("Continue")).resolves.toBe("the second answer");
+    await expect(sub.resumeTurnLoop("Continue", {})).resolves.toEqual({ responseText: "the second answer", turnBudget: { used: 0, phase: "within" } });
   });
 
   it("resolves normally when the resumed turn did not error", async () => {
     const { session } = createSession("RESUMED");
     const { sub } = makeSubagentSession(session);
-    await expect(sub.resumeTurnLoop("Continue")).resolves.toBe("RESUMED");
+    await expect(sub.resumeTurnLoop("Continue", {})).resolves.toEqual({ responseText: "RESUMED", turnBudget: { used: 0, phase: "within" } });
+  });
+});
+
+describe("SubagentSession — resumeTurnLoop turn budget", () => {
+  it("gives a resume a fresh budget with the original run's ceiling", async () => {
+    const { session, listeners } = createSession("done");
+    programTurns(session, listeners, 5);
+    const { sub } = makeSubagentSession(session);
+    const first = await sub.runTurnLoop("go", { maxTurns: 3, wrapUpTurns: 1 });
+    expect(first.turnBudget.phase).toBe("exhausted");
+
+    session.abort.mockClear();
+    programTurns(session, listeners, [{}, { stopReason: "stop", toolResults: 0 }]);
+    const reports: unknown[] = [];
+    const resumed = await sub.resumeTurnLoop("Continue", { onTurnBudget: (budget) => reports.push(budget) });
+    expect(reports[0]).toEqual({ maxTurns: 3, used: 0, phase: "within" });
+    expect(resumed.turnBudget).toEqual({ maxTurns: 3, used: 2, phase: "within" });
+    expect(session.abort).not.toHaveBeenCalled();
+  });
+
+  it("stops a resume at the original run's ceiling", async () => {
+    const { session, listeners } = createSession("done");
+    programTurns(session, listeners, 1);
+    const { sub } = makeSubagentSession(session);
+    await sub.runTurnLoop("go", { maxTurns: 2, wrapUpTurns: 1 });
+
+    programTurns(session, listeners, 4);
+    const resumed = await sub.resumeTurnLoop("Continue", {});
+    expect(session.abort).toHaveBeenCalledOnce();
+    expect(resumed.turnBudget).toEqual({ maxTurns: 2, used: 2, phase: "exhausted" });
   });
 });
 

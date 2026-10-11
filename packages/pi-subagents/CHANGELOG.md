@@ -5,6 +5,140 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [23.4.0](https://github.com/gotgenes/pi-packages/compare/pi-subagents-v23.3.0...pi-subagents-v23.4.0) (2026-10-09)
+
+
+### Features
+
+* **pi-subagents:** report on each agent record why a resume would be refused ([b942f96](https://github.com/gotgenes/pi-packages/commit/b942f96309a8c36e25b3abe8258b6c18fbb10e7f)), closes [#912](https://github.com/gotgenes/pi-packages/issues/912)
+
+### Documentation
+
+* **pi-subagents:** admit resumeRefusal to SubagentRecord under decision 0005 ([0b772d8](https://github.com/gotgenes/pi-packages/commit/0b772d8763741d8e6c147c4d9aa7d2b208f2331e)), closes [#912](https://github.com/gotgenes/pi-packages/issues/912)
+
+## [23.3.0](https://github.com/gotgenes/pi-packages/compare/pi-subagents-v23.2.0...pi-subagents-v23.3.0) (2026-10-09)
+
+
+### Features
+
+* **pi-subagents:** report a running agent's activity, turns, and last progress in get_subagent_result ([a4756fe](https://github.com/gotgenes/pi-packages/commit/a4756fed85c07db81eb91498786308e6e8307478)), closes [#947](https://github.com/gotgenes/pi-packages/issues/947)
+* **pi-subagents:** let get_subagent_result bound its wait with a timeout ([8ba9112](https://github.com/gotgenes/pi-packages/commit/8ba9112f1996b495476c2ae82d24b3a526fd88f1)), closes [#947](https://github.com/gotgenes/pi-packages/issues/947)
+
+### Documentation
+
+* **pi-subagents:** replace upstream README media with a recorded demo ([8e889d0](https://github.com/gotgenes/pi-packages/commit/8e889d0431e569e29b2ae3269fee0e9246e19f46))
+* **pi-subagents:** document get_subagent_result's timeout and progress line ([a640452](https://github.com/gotgenes/pi-packages/commit/a6404525a55254254202264276be565b62caeefe)), closes [#947](https://github.com/gotgenes/pi-packages/issues/947)
+
+## [23.2.0](https://github.com/gotgenes/pi-packages/compare/pi-subagents-v23.1.1...pi-subagents-v23.2.0) (2026-10-06)
+
+
+### Features
+
+* **pi-subagents:** record each run's transcript path and tool count in its session entry ([f019748](https://github.com/gotgenes/pi-packages/commit/f019748c7378eb289c7472d94224e3de19aa9c1b)), closes [#1034](https://github.com/gotgenes/pi-packages/issues/1034)
+
+### Bug Fixes
+
+* **pi-subagents:** keep earlier subagents in /subagents:sessions after /reload ([77ef88a](https://github.com/gotgenes/pi-packages/commit/77ef88af6424a3dc0006665ad34061dab5074f1b)), closes [#1034](https://github.com/gotgenes/pi-packages/issues/1034)
+
+### Documentation
+
+* **pi-subagents:** document persisted runs in /subagents:sessions ([9900b2c](https://github.com/gotgenes/pi-packages/commit/9900b2ca8dd7a1ab7ba84060c01c45cc9443513a)), closes [#1034](https://github.com/gotgenes/pi-packages/issues/1034)
+
+## [23.1.1](https://github.com/gotgenes/pi-packages/compare/pi-subagents-v23.1.0...pi-subagents-v23.1.1) (2026-10-06)
+
+
+### Performance Improvements
+
+* **pi-subagents:** animate the agents widget at 80 ms in fullscreen mode ([cda4a5c](https://github.com/gotgenes/pi-packages/commit/cda4a5ced6bf3318ebfaeb696451191c0dece817)), closes [#1035](https://github.com/gotgenes/pi-packages/issues/1035)
+
+## [23.1.0](https://github.com/gotgenes/pi-packages/compare/pi-subagents-v23.0.0...pi-subagents-v23.1.0) (2026-10-06)
+
+
+### Features
+
+* **pi-subagents:** the session viewer's paging keys follow your keybindings ([c83225b](https://github.com/gotgenes/pi-packages/commit/c83225bc226aa2fbcba216a03e82c5de2d31d42b)), closes [#1032](https://github.com/gotgenes/pi-packages/issues/1032)
+* **pi-subagents:** scroll the session viewer with the mouse wheel ([b800890](https://github.com/gotgenes/pi-packages/commit/b80089052e7afb41d2cdfdaacc98abfb09ba15c9)), closes [#1032](https://github.com/gotgenes/pi-packages/issues/1032)
+
+### Bug Fixes
+
+* **pi-subagents:** page the session viewer natively in fullscreen mode ([915bbf2](https://github.com/gotgenes/pi-packages/commit/915bbf23676af80758943336e43c5cc5597b12bd)), closes [#1032](https://github.com/gotgenes/pi-packages/issues/1032)
+
+### Documentation
+
+* **pi-subagents:** record why the fullscreen session viewer is an overlay ([8c688ba](https://github.com/gotgenes/pi-packages/commit/8c688bab100ce1597a5d7178202822c7a29f12de)), closes [#1032](https://github.com/gotgenes/pi-packages/issues/1032)
+
+## [23.0.0](https://github.com/gotgenes/pi-packages/compare/pi-subagents-v22.0.0...pi-subagents-v23.0.0) (2026-10-03)
+
+
+### Features
+
+* **pi-subagents:** report the turn budget on finished subagents ([5607009](https://github.com/gotgenes/pi-packages/commit/560700977651554635aadeb9b2717a8d5ae6eae9)), closes [#1021](https://github.com/gotgenes/pi-packages/issues/1021)
+* **pi-subagents:** **breaking:** report a run that wraps up at its turn limit as completed ([d457702](https://github.com/gotgenes/pi-packages/commit/d4577024e37249f3a11fdb4ef7abb01d0424597b)), closes [#1021](https://github.com/gotgenes/pi-packages/issues/1021)
+* **pi-subagents:** **breaking:** report the turn budget on subagents:child:completed ([1ec3240](https://github.com/gotgenes/pi-packages/commit/1ec32405b302a93d5dbf3318035a1dc1f8dce047)), closes [#1021](https://github.com/gotgenes/pi-packages/issues/1021)
+* **pi-subagents:** **breaking:** stop a subagent at max_turns, after warning it while wrap-up turns remain ([0bb9cc7](https://github.com/gotgenes/pi-packages/commit/0bb9cc79475fe5d172f7d06cf7ddd0698a6d38ac)), closes [#1022](https://github.com/gotgenes/pi-packages/issues/1022)
+* **pi-subagents:** describe a warned or stopped run by its turn budget ([a013f1d](https://github.com/gotgenes/pi-packages/commit/a013f1df8fc8e837e2ae7ca9692de1173bffbfca)), closes [#1022](https://github.com/gotgenes/pi-packages/issues/1022)
+* **pi-subagents:** track a running subagent's turn budget live ([71a5223](https://github.com/gotgenes/pi-packages/commit/71a5223f771bb553d5bf014eb93193fc9779ee9e)), closes [#1022](https://github.com/gotgenes/pi-packages/issues/1022)
+* **pi-subagents:** **breaking:** give a resumed subagent a fresh turn budget ([4411a80](https://github.com/gotgenes/pi-packages/commit/4411a8086983a55a75307a2905092237accb410e)), closes [#1022](https://github.com/gotgenes/pi-packages/issues/1022)
+* **pi-subagents:** **breaking:** report turns only through turnBudget ([9ac16d3](https://github.com/gotgenes/pi-packages/commit/9ac16d304a07475c3fb2f93efe87f6ca40667376)), closes [#1022](https://github.com/gotgenes/pi-packages/issues/1022)
+* **pi-subagents:** **breaking:** run subagents for at least two turns and warn below that ([62e0977](https://github.com/gotgenes/pi-packages/commit/62e0977834f4af4de241b79ff8fe125f7dcbf12b)), closes [#1022](https://github.com/gotgenes/pi-packages/issues/1022)
+
+### Documentation
+
+* **pi-subagents:** document the turn budget outcome and correct the lifecycle diagram ([dbed2c9](https://github.com/gotgenes/pi-packages/commit/dbed2c92873ccb797e61d971f58d55748927d03e)), closes [#1021](https://github.com/gotgenes/pi-packages/issues/1021)
+* **pi-subagents:** document the turn ceiling and live turn budget ([4624cf3](https://github.com/gotgenes/pi-packages/commit/4624cf3e07997beba779056f50942ad656905ffc)), closes [#1022](https://github.com/gotgenes/pi-packages/issues/1022)
+
+## [22.0.0](https://github.com/gotgenes/pi-packages/compare/pi-subagents-v21.9.4...pi-subagents-v22.0.0) (2026-10-03)
+
+
+### Features
+
+* **pi-subagents:** **breaking:** require Pi 1.0.0 or later ([e93ec7c](https://github.com/gotgenes/pi-packages/commit/e93ec7cead9f1a82b7cfc34d0dbadb3dd21125d9)), closes [#1004](https://github.com/gotgenes/pi-packages/issues/1004)
+* **pi-subagents:** load codemode, tool_search, and MCP in a child whose tools: names them ([c9a30d7](https://github.com/gotgenes/pi-packages/commit/c9a30d779fc08f5330f17d67177b28ba3f71a861)), closes [#1006](https://github.com/gotgenes/pi-packages/issues/1006)
+* **pi-subagents:** let tools: name a whole MCP server with mcp__<server>__* ([9f9b0f3](https://github.com/gotgenes/pi-packages/commit/9f9b0f3d3323a1a65eb01089395a8bd155bae457)), closes [#1006](https://github.com/gotgenes/pi-packages/issues/1006)
+
+### Documentation
+
+* **pi-subagents:** document codemode, tool_search, and MCP tools in children ([d8d68c2](https://github.com/gotgenes/pi-packages/commit/d8d68c2b960bfe88d6bd4ff26d93475899f879a7)), closes [#1006](https://github.com/gotgenes/pi-packages/issues/1006)
+* **pi-subagents:** correct the peer scope and MCP details the review flagged ([9dd71ab](https://github.com/gotgenes/pi-packages/commit/9dd71abeb98faf89241fac1d00c7e379c18c4282)), closes [#1006](https://github.com/gotgenes/pi-packages/issues/1006)
+
+## [21.9.4](https://github.com/gotgenes/pi-packages/compare/pi-subagents-v21.9.3...pi-subagents-v21.9.4) (2026-10-02)
+
+
+### Bug Fixes
+
+* **pi-subagents:** keep a resume's claim when a get_subagent_result wait wakes after it starts ([dae195a](https://github.com/gotgenes/pi-packages/commit/dae195a022a44dbbe3e0b4a93525500809b3a2a4)), closes [#1015](https://github.com/gotgenes/pi-packages/issues/1015)
+* **pi-subagents:** report the run a get_subagent_result wait waited for when a resume starts first ([b10dccd](https://github.com/gotgenes/pi-packages/commit/b10dccd5d00c1d6aa13d1b2980844112aba8d962)), closes [#1015](https://github.com/gotgenes/pi-packages/issues/1015)
+
+## [21.9.3](https://github.com/gotgenes/pi-packages/compare/pi-subagents-v21.9.2...pi-subagents-v21.9.3) (2026-10-02)
+
+
+### Bug Fixes
+
+* **pi-subagents:** announce a resumed agent's outcome even after an earlier carrier delivered it ([dab3c05](https://github.com/gotgenes/pi-packages/commit/dab3c0532316f5a9bee3e84683ef49e49abe4526)), closes [#987](https://github.com/gotgenes/pi-packages/issues/987)
+* **pi-subagents:** resume a subagent in the background when the call asks for run_in_background ([0681086](https://github.com/gotgenes/pi-packages/commit/06810861c55ca0107c5f9cfa917d813ee264be0f)), closes [#987](https://github.com/gotgenes/pi-packages/issues/987)
+
+### Documentation
+
+* **pi-subagents:** document background resume ([3b0a702](https://github.com/gotgenes/pi-packages/commit/3b0a70217995ae35f6c36c11fc74e25ced826386)), closes [#987](https://github.com/gotgenes/pi-packages/issues/987)
+
+## [21.9.2](https://github.com/gotgenes/pi-packages/compare/pi-subagents-v21.9.1...pi-subagents-v21.9.2) (2026-10-02)
+
+
+### Bug Fixes
+
+* **pi-subagents:** render notify_parent updates with the subagent renderer instead of Pi's fallback box ([#1008](https://github.com/gotgenes/pi-packages/issues/1008)) ([35ac9e7](https://github.com/gotgenes/pi-packages/commit/35ac9e7f9d2b535609f7f403be75edec78ecd6d5)), closes [#1008](https://github.com/gotgenes/pi-packages/issues/1008)
+
+## [21.9.1](https://github.com/gotgenes/pi-packages/compare/pi-subagents-v21.9.0...pi-subagents-v21.9.1) (2026-10-02)
+
+
+### Bug Fixes
+
+* **pi-subagents:** stop children inheriting the parent's tool list and rules ([6a1fa48](https://github.com/gotgenes/pi-packages/commit/6a1fa48d1104978cd4addc57c17db35e7679b46f)), closes [#1009](https://github.com/gotgenes/pi-packages/issues/1009)
+
+### Documentation
+
+* **pi-subagents:** record that a child never inherits Pi's tool surface ([e4e564d](https://github.com/gotgenes/pi-packages/commit/e4e564da2a3daad6abca431048088910915392e0)), closes [#1009](https://github.com/gotgenes/pi-packages/issues/1009)
+
 ## [21.9.0](https://github.com/gotgenes/pi-packages/compare/pi-subagents-v21.8.1...pi-subagents-v21.9.0) (2026-10-01)
 
 

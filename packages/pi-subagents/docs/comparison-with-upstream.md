@@ -11,13 +11,13 @@ Versions compared: `@gotgenes/pi-subagents` 16.2.1 and `@tintinweb/pi-subagents`
 
 ## At a glance
 
-| Aspect          | @gotgenes/pi-subagents          | @tintinweb/pi-subagents                 |
-| --------------- | ------------------------------- | --------------------------------------- |
-| Philosophy      | Minimal, composable core        | Batteries-included, all-in-one          |
-| Pi peer scope   | `@earendil-works/pi-*` (>=0.75) | `@earendil-works/pi-*` (>=0.74)         |
-| Spawn tool name | `subagent`                      | `Agent`                                 |
-| Runtime deps    | none (`typebox` is a Pi peer)   | `@sinclair/typebox`, `croner`, `nanoid` |
-| License         | MIT                             | MIT                                     |
+| Aspect          | @gotgenes/pi-subagents           | @tintinweb/pi-subagents                 |
+| --------------- | -------------------------------- | --------------------------------------- |
+| Philosophy      | Minimal, composable core         | Batteries-included, all-in-one          |
+| Pi peer scope   | `@earendil-works/pi-*` (>=1.0.0) | `@earendil-works/pi-*` (>=0.74)         |
+| Spawn tool name | `subagent`                       | `Agent`                                 |
+| Runtime deps    | none (`typebox` is a Pi peer)    | `@sinclair/typebox`, `croner`, `nanoid` |
+| License         | MIT                              | MIT                                     |
 
 Both ship TypeScript source directly (Pi runs `./src/index.ts`) and target the same `@earendil-works/pi-*` Pi.
 The peer-dep migration that prompted the original fork has since landed upstream, so the Pi scope is no longer a differentiator.
@@ -28,7 +28,7 @@ Both extensions provide the same core experience:
 
 - Foreground/background subagents with a live above-editor widget and a conversation viewer.
 - Custom agent types defined in `.pi/agents/<name>.md` with YAML frontmatter (system prompt, model, thinking, tools).
-- Fuzzy model selection, context inheritance, mid-run steering, session resume, and graceful turn limits.
+- Fuzzy model selection, context inheritance, mid-run steering, session resume, and turn limits.
 - A `pi.events` lifecycle bus (`subagents:created`, `started`, `completed`, `failed`, `steered`, `compacted`).
 
 ## What upstream has that this fork does not
@@ -54,6 +54,7 @@ This fork is a minimal core that other extensions build on, plus a small compani
 - **Typed service API** — `SubagentsService` exposed via `Symbol.for()` accessors, so another extension can spawn and manage subagents without importing this package or relying on ad-hoc event RPC.
 - **Child-session lifecycle events** — `subagents:child:spawning` / `session-created` / `bound` / `completed` / `disposed`, with `session-created` firing synchronously before `bindExtensions()` so consumers can register the child session deterministically, and `bound` firing after it resolves so they can observe what the child's extensions installed.
 - **`<active_agent>` system-prompt tag** — lets [`@gotgenes/pi-permission-system`](https://github.com/gotgenes/pi-packages/tree/main/packages/pi-permission-system) resolve per-agent `permission:` frontmatter (allow / ask / deny — richer than a binary denylist) inside the child session.
+- **Turn budgets** — `max_turns` is a hard ceiling rather than a wrap-up point followed by grace turns, the child is told its remaining turns while it still has room to answer, and the budget is live on the record and in the widget.
 - **Companion packages** — permission policy and worktree isolation live in dedicated packages rather than the core.
 - **Re-architected codebase** — decomposed into seven domains behind a typed public API boundary, backed by ~994 tests.
 

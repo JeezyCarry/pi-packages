@@ -9,7 +9,8 @@ export function registerIssueClose(pi: ExtensionAPI): void {
     label: "Issue Close",
     description:
       "Close a GitHub issue with an optional comment. " +
-      "Validates the reason (completed or not_planned) and wraps gh issue close.",
+      "Validates the reason (completed or not_planned) and wraps gh issue close. " +
+      "Refuses to close when a 7-40 character hex token in the comment does not resolve to a commit in the local checkout; correct the SHA rather than setting skip_sha_validation.",
     promptSnippet: "Close a GitHub issue with an optional comment.",
     parameters: Type.Object({
       issue_number: Type.Number({
@@ -25,6 +26,15 @@ export function registerIssueClose(pi: ExtensionAPI): void {
           description: 'Close reason: "completed" (default) or "not_planned".',
         }),
       ),
+      skip_sha_validation: Type.Optional(
+        Type.Boolean({
+          description:
+            "Skip local resolution of lowercase word-bounded 7-40 character hex tokens in the comment. " +
+            "Omit or false (the default) to refuse the close when any token does not resolve to a commit. " +
+            "Set true only for a foreign commit or a non-commit hash you intend to publish unresolved. " +
+            "Correct a typo instead of setting this.",
+        }),
+      ),
     }),
     async execute(_toolCallId, params, signal) {
       try {
@@ -32,6 +42,7 @@ export function registerIssueClose(pi: ExtensionAPI): void {
           issueNumber: params.issue_number,
           comment: params.comment,
           reason: params.reason,
+          skipShaValidation: params.skip_sha_validation,
           signal,
         });
         return ok(content);

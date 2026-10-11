@@ -1,10 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
-import { type BackgroundParams, spawnBackground } from "#src/tools/background-spawner";
+import { type BackgroundParams, renderBackgroundLaunch, spawnBackground } from "#src/tools/background-spawner";
 import { createToolDeps } from "#test/helpers/make-deps";
 import { createResolvedSpawnConfig } from "#test/helpers/make-spawn-config";
 import { createTestSubagent } from "#test/helpers/make-subagent";
 import { createMockSession, createSubagentSessionStub, toSubagentSession } from "#test/helpers/mock-session";
 import { STUB_SNAPSHOT } from "#test/helpers/stub-ctx";
+import { textOf } from "#test/helpers/text-of";
 
 function makeConfig(overrides: Parameters<typeof createResolvedSpawnConfig>[0] = {}) {
   return createResolvedSpawnConfig({
@@ -25,6 +26,66 @@ function makeParams(overrides: Partial<BackgroundParams> = {}): BackgroundParams
     ...overrides,
   };
 }
+
+describe("renderBackgroundLaunch", () => {
+  const detailBase = {
+    displayName: "Explore",
+    description: "answer",
+    subagentType: "Explore",
+    modelName: undefined,
+    tags: undefined,
+  };
+
+  it("renders a resumed launch with its output file", () => {
+    const result = renderBackgroundLaunch({
+      headline: "Agent resumed in background.",
+      id: "agent-7",
+      displayName: "Explore",
+      description: "answer",
+      detailBase,
+      outputFile: "/sessions/agent-7.jsonl",
+    });
+
+    expect(textOf(result)).toBe(
+      "Agent resumed in background.\n" +
+        "Agent ID: agent-7\n" +
+        "Type: Explore\n" +
+        "Description: answer\n" +
+        "Output file: /sessions/agent-7.jsonl\n" +
+        "\nYou will be notified when this agent completes.\n" +
+        "Use get_subagent_result to retrieve full results, or steer_subagent to send it messages.\n" +
+        "Do not duplicate this agent's work.",
+    );
+    expect(result.details).toEqual({
+      ...detailBase,
+      toolUses: 0,
+      tokens: "",
+      durationMs: 0,
+      status: "background",
+      agentId: "agent-7",
+    });
+  });
+
+  it("omits the notes, output file, and queue position it was not given", () => {
+    const result = renderBackgroundLaunch({
+      headline: "Agent resumed in background.",
+      id: "agent-7",
+      displayName: "Explore",
+      description: "answer",
+      detailBase,
+    });
+
+    expect(textOf(result)).toBe(
+      "Agent resumed in background.\n" +
+        "Agent ID: agent-7\n" +
+        "Type: Explore\n" +
+        "Description: answer\n" +
+        "\nYou will be notified when this agent completes.\n" +
+        "Use get_subagent_result to retrieve full results, or steer_subagent to send it messages.\n" +
+        "Do not duplicate this agent's work.",
+    );
+  });
+});
 
 describe("spawnBackground", () => {
   /**
@@ -64,8 +125,8 @@ describe("spawnBackground", () => {
         config: makeConfig({ description: "my task" }),
       }),
     );
-    expect(result.content[0].text).toContain("agent-1");
-    expect(result.content[0].text).toContain("my task");
+    expect(textOf(result)).toContain("agent-1");
+    expect(textOf(result)).toContain("my task");
   });
 
   it("mentions 'queued' in result when record status is queued", () => {
@@ -77,14 +138,14 @@ describe("spawnBackground", () => {
       },
     });
     const result = spawnBackground(deps.manager, makeParams({ settings: { maxConcurrent: 4 } }));
-    expect(result.content[0].text).toContain("queued");
-    expect(result.content[0].text).toContain("max 4 concurrent");
+    expect(textOf(result)).toContain("queued");
+    expect(textOf(result)).toContain("max 4 concurrent");
   });
 
   it("mentions 'started' in result when record is running", () => {
     const { manager } = createToolDeps();
     const result = spawnBackground(manager, makeParams());
-    expect(result.content[0].text).toContain("started");
+    expect(textOf(result)).toContain("started");
   });
 
   it("includes output file path in result when present", () => {
@@ -98,7 +159,7 @@ describe("spawnBackground", () => {
       },
     });
     const result = spawnBackground(deps.manager, makeParams());
-    expect(result.content[0].text).toContain("/sessions/bg.jsonl");
+    expect(textOf(result)).toContain("/sessions/bg.jsonl");
   });
 
   it("leads the result with the spawn's notes", () => {
@@ -107,7 +168,7 @@ describe("spawnBackground", () => {
       manager,
       makeParams({ config: makeConfig({ fellBack: true, rawType: "unknown-type" }) }),
     );
-    expect(result.content[0].text).toMatch(
+    expect(textOf(result)).toMatch(
       /^Note: Unknown agent type "unknown-type" — using general-purpose\.\n\nAgent (started|queued) in background\./,
     );
   });
@@ -115,7 +176,65 @@ describe("spawnBackground", () => {
   it("leads the result with the launch message when there are no notes", () => {
     const { manager } = createToolDeps();
     const result = spawnBackground(manager, makeParams());
-    expect(result.content[0].text).toMatch(/^Agent (started|queued) in background\./);
+    expect(textOf(result)).toMatch(/^Agent (started|queued) in background\./);
+  });
+
+  describe("launch message", () => {
+    it("renders the started launch with its output file", () => {
+      const record = createTestSubagent({ status: "running" });
+      record.subagentSession = toSubagentSession(createSubagentSessionStub(createMockSession(), "/sessions/bg.jsonl"));
+      const deps = createToolDeps({
+        manager: { ...createToolDeps().manager, spawn: vi.fn().mockReturnValue("bg-3"), getRecord: vi.fn().mockReturnValue(record) },
+      });
+
+      const result = spawnBackground(deps.manager, makeParams());
+
+      expect(textOf(result)).toBe(
+        "Agent started in background.\n" +
+          "Agent ID: bg-3\n" +
+          "Type: General-purpose\n" +
+          "Description: bg task\n" +
+          "Output file: /sessions/bg.jsonl\n" +
+          "\nYou will be notified when this agent completes.\n" +
+          "Use get_subagent_result to retrieve full results, or steer_subagent to send it messages.\n" +
+          "Do not duplicate this agent's work.",
+      );
+      expect(result.details).toEqual({
+        displayName: "General-purpose",
+        description: "bg task",
+        subagentType: "general-purpose",
+        modelName: undefined,
+        tags: undefined,
+        toolUses: 0,
+        tokens: "",
+        durationMs: 0,
+        status: "background",
+        agentId: "bg-3",
+      });
+    });
+
+    it("renders the queued launch with its queue position", () => {
+      const deps = createToolDeps({
+        manager: {
+          ...createToolDeps().manager,
+          spawn: vi.fn().mockReturnValue("bg-2"),
+          getRecord: vi.fn().mockReturnValue(createTestSubagent({ status: "queued" })),
+        },
+      });
+
+      const result = spawnBackground(deps.manager, makeParams({ settings: { maxConcurrent: 4 } }));
+
+      expect(textOf(result)).toBe(
+        "Agent queued in background.\n" +
+          "Agent ID: bg-2\n" +
+          "Type: General-purpose\n" +
+          "Description: bg task\n" +
+          "Position: queued (max 4 concurrent)\n" +
+          "\nYou will be notified when this agent completes.\n" +
+          "Use get_subagent_result to retrieve full results, or steer_subagent to send it messages.\n" +
+          "Do not duplicate this agent's work.",
+      );
+    });
   });
 
   it("returns error text when manager.spawn throws", () => {
@@ -127,6 +246,6 @@ describe("spawnBackground", () => {
       },
     });
     const result = spawnBackground(deps.manager, makeParams());
-    expect(result.content[0].text).toContain("spawn failed");
+    expect(textOf(result)).toContain("spawn failed");
   });
 });

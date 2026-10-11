@@ -89,6 +89,7 @@ export function createSubagentSessionDeps(overrides?: {
 	registry?: AgentConfigLookup;
 	lifecycle?: ReturnType<typeof createChildLifecycleMock>;
 	resolvePromptInheritance?: (provider: string | undefined) => PromptInheritance;
+	listParentToolNames?: () => readonly string[];
 }) {
 	return {
 		io: overrides?.io ?? createSubagentSessionIO(),
@@ -98,6 +99,8 @@ export function createSubagentSessionDeps(overrides?: {
 		resolvePromptInheritance:
 			overrides?.resolvePromptInheritance ??
 			vi.fn((_provider: string | undefined): PromptInheritance => "full"),
+		listParentToolNames:
+			overrides?.listParentToolNames ?? vi.fn((): readonly string[] => []),
 	};
 }
 

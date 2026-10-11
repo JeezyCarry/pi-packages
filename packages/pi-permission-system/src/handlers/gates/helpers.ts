@@ -125,6 +125,7 @@ export function deriveDecisionValue(
     case "bash":
       return check.command ?? toolName;
     case "mcp":
+    case "mcp-tool":
       return check.target ?? toolName;
     case "path":
     case "skill":

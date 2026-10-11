@@ -8,6 +8,9 @@ line-length = 0
 reflow = true
 reflow-mode = "sentence-per-line"
 
+[MD018]
+magiclink = true
+
 [MD024]
 siblings_only = true
 

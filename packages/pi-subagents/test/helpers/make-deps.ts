@@ -56,6 +56,7 @@ export function createToolDeps(overrides: Partial<AgentToolFixture> = {}): Agent
 			spawn: vi.fn().mockReturnValue("agent-1"),
 			spawnAndWait: vi.fn().mockResolvedValue(createTestSubagent()),
 			resume: vi.fn().mockResolvedValue({ kind: "resumed", record: createTestSubagent() }),
+			startResume: vi.fn().mockReturnValue({ kind: "started", record: createTestSubagent() }),
 			getRecord: vi.fn().mockReturnValue(createTestSubagent()),
 		},
 		runtime,
@@ -88,6 +89,24 @@ export function mockResumeRecord(
  */
 export function mockResumeRefusal(deps: AgentToolFixture, reason: ResumeRefusalReason): void {
 	deps.manager.resume = vi.fn().mockResolvedValue({ kind: "refused", reason });
+}
+
+/**
+ * Point the fixture's `manager.startResume` at a record built from `overrides`,
+ * and return that record so the test can assert on it.
+ */
+export function mockResumeStart(
+	deps: AgentToolFixture,
+	overrides: TestSubagentOptions = {},
+): Subagent {
+	const record = createTestSubagent(overrides);
+	deps.manager.startResume = vi.fn().mockReturnValue({ kind: "started", record });
+	return record;
+}
+
+/** Point the fixture's `manager.startResume` at a refusal. */
+export function mockResumeStartRefusal(deps: AgentToolFixture, reason: ResumeRefusalReason): void {
+	deps.manager.startResume = vi.fn().mockReturnValue({ kind: "refused", reason });
 }
 
 /**

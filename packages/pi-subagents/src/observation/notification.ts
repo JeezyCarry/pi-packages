@@ -1,5 +1,6 @@
 import { debugLog } from "#src/debug";
 import type { SubagentStatus } from "#src/lifecycle/subagent-state";
+import type { TurnBudget } from "#src/lifecycle/turn-limits";
 import { getLifetimeTotal } from "#src/lifecycle/usage";
 import {
   renderQuestionAffordance,
@@ -15,13 +16,13 @@ export interface NotificationDetails {
   description: string;
   status: SubagentStatus;
   toolUses: number;
-  turnCount: number;
-  maxTurns?: number;
   totalTokens: number;
   durationMs: number;
   outputFile?: string;
   error?: string;
   resultPreview: string;
+  /** The run's turn budget; absent until its turn loop starts. */
+  turnBudget?: TurnBudget;
 }
 
 // ---- Pure helpers (exported for unit testing) ----
@@ -44,7 +45,7 @@ export function escapeXml(s: string): string {
 export function formatTaskNotification(record: Subagent, resultMaxLen: number): string {
   if (record.stoppedWhileQueued) return formatNeverStartedNotification(record);
 
-  const status = renderStatusLabel(record.status, record.error);
+  const status = renderStatusLabel(record);
   const durationMs = record.completedAt ? record.completedAt - record.startedAt : 0;
   const totalTokens = getLifetimeTotal(record.lifetimeUsage);
   const contextPercent = record.getContextPercent();
@@ -143,13 +144,12 @@ export function buildNotificationDetails(
     description: record.description,
     status: record.status,
     toolUses: record.toolUses,
-    turnCount: record.turnCount,
-    maxTurns: record.maxTurns,
     totalTokens,
     durationMs: record.completedAt ? record.completedAt - record.startedAt : 0,
     outputFile: record.outputFile,
     error: record.error,
     resultPreview: buildResultPreview(record, resultMaxLen),
+    turnBudget: record.turnBudget,
   };
 }
 
@@ -178,6 +178,7 @@ export function buildEventData(record: Subagent) {
     result: record.result,
     error: record.error,
     status: record.status,
+    turnBudget: record.turnBudget,
     toolUses: record.toolUses,
     durationMs,
     tokens,

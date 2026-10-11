@@ -1,7 +1,7 @@
 import type { ParentSnapshot } from "#src/lifecycle/parent-snapshot";
 import type { AgentSpawnConfig } from "#src/lifecycle/subagent-manager";
 import { renderSpawnNotes, textResult } from "#src/tools/helpers";
-import type { ResolvedSpawnConfig } from "#src/tools/spawn-config";
+import type { ResolvedSpawnConfig, SpawnPresentation } from "#src/tools/spawn-config";
 import type { ParentSessionInfo, Subagent } from "#src/types";
 import type { AgentDetails } from "#src/ui/display";
 
@@ -19,9 +19,24 @@ export interface BackgroundParams {
   settings: { readonly maxConcurrent: number };
 }
 
+/** What a background launch reports: one shape for every door that returns before the run ends. */
+export interface BackgroundLaunch {
+  /** The leading line, e.g. "Agent started in background." */
+  headline: string;
+  id: string;
+  displayName: string;
+  description: string;
+  detailBase: SpawnPresentation["detailBase"];
+  /** Advisories that lead the result; omitted when the door has none. */
+  notes?: readonly string[];
+  outputFile?: string;
+  /** Present only when the launch is waiting for a concurrency slot. */
+  queuePosition?: { maxConcurrent: number };
+}
+
 /**
  * Spawn a background agent and return the tool result immediately.
- * Owns: launch message formatting.
+ * Owns: mapping the spawned record onto its launch report.
  */
 export function spawnBackground(
   manager: BackgroundManagerDeps,
@@ -47,28 +62,45 @@ export function spawnBackground(
   }
 
   const record = manager.getRecord(id);
-
   const isQueued = record?.status === "queued";
+  return renderBackgroundLaunch({
+    headline: `Agent ${isQueued ? "queued" : "started"} in background.`,
+    id,
+    displayName: identity.displayName,
+    description: execution.description,
+    detailBase: presentation.detailBase,
+    notes,
+    outputFile: record?.outputFile,
+    queuePosition: isQueued ? { maxConcurrent: params.settings.maxConcurrent } : undefined,
+  });
+}
+
+/**
+ * Render a background launch as the tool result: the launch message and the
+ * `background` details the result renderer shows while the run continues.
+ * Owns: launch message formatting, for every door that launches in the background.
+ */
+export function renderBackgroundLaunch(launch: BackgroundLaunch) {
   // Annotated rather than inlined into the call: `textResult` is generic over its
   // details, so an inline literal would define the type instead of being checked
   // against it.
   const details: AgentDetails = {
-    ...presentation.detailBase,
+    ...launch.detailBase,
     toolUses: 0,
     tokens: "",
     durationMs: 0,
     status: "background",
-    agentId: id,
+    agentId: launch.id,
   };
   return textResult(
-    renderSpawnNotes(notes) +
-      `Agent ${isQueued ? "queued" : "started"} in background.\n` +
-      `Agent ID: ${id}\n` +
-      `Type: ${identity.displayName}\n` +
-      `Description: ${execution.description}\n` +
-      (record?.outputFile ? `Output file: ${record.outputFile}\n` : "") +
-      (isQueued
-        ? `Position: queued (max ${params.settings.maxConcurrent} concurrent)\n`
+    renderSpawnNotes(launch.notes ?? []) +
+      `${launch.headline}\n` +
+      `Agent ID: ${launch.id}\n` +
+      `Type: ${launch.displayName}\n` +
+      `Description: ${launch.description}\n` +
+      (launch.outputFile ? `Output file: ${launch.outputFile}\n` : "") +
+      (launch.queuePosition
+        ? `Position: queued (max ${launch.queuePosition.maxConcurrent} concurrent)\n`
         : "") +
       `\nYou will be notified when this agent completes.\n` +
       `Use get_subagent_result to retrieve full results, or steer_subagent to send it messages.\n` +

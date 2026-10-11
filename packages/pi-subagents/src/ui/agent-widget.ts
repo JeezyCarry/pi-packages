@@ -5,6 +5,7 @@
  * Uses the callback form of setWidget for themed rendering.
  */
 
+import type { TuiMode } from "@earendil-works/pi-tui";
 import { AgentTypeRegistry } from "#src/config/agent-types";
 import type { Subagent } from "#src/lifecycle/subagent";
 import type { SubagentManager, SubagentManagerObserver } from "#src/lifecycle/subagent-manager";
@@ -53,6 +54,11 @@ export function assembleWidgetState(
 /** The slice of the TUI the widget factory callback touches. */
 export interface TuiSurface {
   readonly terminal: { readonly columns: number; readonly rows: number };
+  /**
+   * The active renderer's mode. Pi hands widget factories a proxy that follows
+   * the current renderer, so this stays current across a `/fullscreen` switch.
+   */
+  readonly mode: TuiMode;
   requestRender(): void;
 }
 
@@ -66,21 +72,35 @@ export type UICtx = {
 };
 
 /**
- * How often the widget re-renders while a subagent animates.
+ * How often the widget re-renders while a subagent animates, per TUI mode.
  *
- * Pi renders the entire regular-mode component tree per request, and the widget
- * is the only thing requesting one while the parent idles, so this is the
- * cadence of that whole-tree walk. Deliberately slower than Pi's own `Loader`
- * default, which pays 80 ms only during a turn the user is already watching.
+ * The widget is the only thing asking Pi for a frame while the parent idles,
+ * and every frame walks the whole component tree, transcript included. Measured
+ * against real session transcripts mounted on Pi's own renderers (pi-tui 1.0.0):
+ *
+ * - Fullscreen diffs only the visible rows and Pi's components cache their
+ *   lines, so a frame costs under 1 ms even at 18k transcript lines (~1% of a
+ *   core at 80 ms). It ticks at Pi's own `Loader` cadence.
+ * - Regular mode's frame cost scales with the transcript (~9 ms at 18k lines),
+ *   so 80 ms would cost ~11% of a core for as long as an agent runs; it keeps
+ *   250 ms (~3.5%).
+ *
+ * An unknown mode (no TUI captured yet) takes the conservative regular cadence.
  */
-const WIDGET_UPDATE_INTERVAL_MS = 250;
+const FULLSCREEN_ANIMATION_MS = 80;
+const REGULAR_ANIMATION_MS = 250;
+
+function animationIntervalMs(mode: TuiMode | undefined): number {
+  return mode === "fullscreen" ? FULLSCREEN_ANIMATION_MS : REGULAR_ANIMATION_MS;
+}
 
 // ---- Widget manager ----
 
 export class AgentWidget implements SubagentManagerObserver {
   private uiCtx: UICtx | undefined;
   private widgetFrame = 0;
-  private widgetInterval: ReturnType<typeof setInterval> | undefined;
+  /** The pending one-shot animation tick; each tick's `update()` re-arms it while an agent runs. */
+  private widgetTimer: ReturnType<typeof setTimeout> | undefined;
   /** Tracks how many turns each finished agent has survived. Key: agent ID, Value: turns since finished. */
   private finishedTurnAge = new Map<string, number>();
   /** How many extra turns errors/aborted agents linger (completed agents clear after 1 turn). */
@@ -161,12 +181,15 @@ export class AgentWidget implements SubagentManagerObserver {
    */
   private setTimerRunning(shouldRun: boolean): void {
     if (shouldRun) {
-      this.widgetInterval ??= setInterval(() => this.update(), WIDGET_UPDATE_INTERVAL_MS);
+      this.widgetTimer ??= setTimeout(() => {
+        this.widgetTimer = undefined;
+        this.update();
+      }, animationIntervalMs(this.tui?.mode));
       return;
     }
-    if (this.widgetInterval) {
-      clearInterval(this.widgetInterval);
-      this.widgetInterval = undefined;
+    if (this.widgetTimer) {
+      clearTimeout(this.widgetTimer);
+      this.widgetTimer = undefined;
     }
   }
 
@@ -204,8 +227,7 @@ export class AgentWidget implements SubagentManagerObserver {
       error: record.error,
       lifetimeUsage: record.lifetimeUsage,
       compactionCount: record.compactionCount,
-      turnCount: record.turnCount,
-      maxTurns: record.maxTurns,
+      turnBudget: record.turnBudget,
       activeTools: record.activeTools,
       responseText: record.responseText,
       contextPercent: record.getContextPercent(),
@@ -227,7 +249,7 @@ export class AgentWidget implements SubagentManagerObserver {
   }
 
   /**
-   * Unregister the widget, clear the status bar, stop the interval timer, and
+   * Unregister the widget, clear the status bar, stop the animation timer, and
    * purge stale `finishedTurnAge` entries for agents no longer in `backgroundAgents`.
    * Called only from `update`'s idle path — not from `dispose`.
    */
@@ -294,11 +316,6 @@ export class AgentWidget implements SubagentManagerObserver {
       return;
     }
 
-    // Only a running agent has content that changes between ticks: a finished
-    // line's duration is fixed and the queued line is a count, so animating
-    // either would ask Pi to re-render its whole component tree for a
-    // byte-identical result.
-    this.setTimerRunning(state.runningCount > 0);
     this.updateStatusBar(state);
     this.widgetFrame++;
 
@@ -321,10 +338,17 @@ export class AgentWidget implements SubagentManagerObserver {
       // Widget already registered — just request a re-render of existing components.
       this.tui?.requestRender();
     }
+
+    // Only a running agent has content that changes between ticks: a finished
+    // line's duration is fixed and the queued line is a count, so animating
+    // either would ask Pi to re-render its whole component tree for a
+    // byte-identical result. Armed after registration, so the next tick's
+    // interval can read the TUI the factory just captured.
+    this.setTimerRunning(state.runningCount > 0);
   }
 
   /**
-   * Release everything the widget acquired: the update interval and both
+   * Release everything the widget acquired: the animation timer and both
    * registrations on the session's `UICtx`.
    *
    * Disposal is final. Dropping the `UICtx` makes `update()` return at its

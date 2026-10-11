@@ -61,6 +61,60 @@ function makeAssistantEntry(
   };
 }
 
+function makeBashCallEntry(id: string, callId: string, command: string) {
+  return {
+    type: "message",
+    id,
+    parentId: null,
+    timestamp: "t",
+    message: {
+      role: "assistant",
+      content: [
+        { type: "toolCall", id: callId, name: "bash", arguments: { command } },
+      ],
+      provider: "p",
+      model: "m",
+    },
+  };
+}
+
+function makeToolResultEntry(
+  id: string,
+  toolCallId: string,
+  toolName: string,
+  isError = false,
+) {
+  return {
+    type: "message",
+    id,
+    parentId: null,
+    timestamp: "t",
+    message: {
+      role: "toolResult",
+      toolCallId,
+      toolName,
+      content: [{ type: "text", text: "output" }],
+      isError,
+    },
+  };
+}
+
+/** Shaped after Pi's `ContextEditEntry`: `replacement: null` omits the target. */
+function makeContextEditEntry(
+  id: string,
+  targetId: string,
+  replacement: { content: unknown } | null,
+) {
+  return {
+    type: "context_edit",
+    id,
+    parentId: null,
+    timestamp: "t",
+    targetId,
+    replacement,
+  };
+}
+
 describe("formatTranscript — tool calls and result folding", () => {
   it("formats an assistant message with a single tool call and correlated result", () => {
     const entries = [
@@ -937,5 +991,235 @@ describe("branch markers", () => {
     expect(formatTranscript([unknownVariant, makeUserEntry("hello")])).toBe(
       "1. user\nhello",
     );
+  });
+});
+
+describe("context edits", () => {
+  it("marks an omitted user turn where the edit happened, without renumbering", () => {
+    const entries = [
+      makeUserEntry("first question", "u1"),
+      makeAssistantEntry("first answer", "p", "m", "a1"),
+      makeContextEditEntry("e1", "u1", null),
+      makeUserEntry("second question", "u2"),
+    ];
+    expect(formatTranscript(entries)).toBe(
+      [
+        "1. user\nfirst question",
+        "2. assistant [p/m]\nfirst answer",
+        "[context edit] turn 1 (user) omitted from context",
+        "3. user\nsecond question",
+      ].join("\n\n---\n\n"),
+    );
+  });
+
+  it("marks a replaced turn as replaced", () => {
+    const entries = [
+      makeUserEntry("q", "u1"),
+      makeAssistantEntry("long answer", "p", "m", "a1"),
+      makeContextEditEntry("e1", "a1", { content: "short answer" }),
+    ];
+    expect(formatTranscript(entries).split("\n\n---\n\n").at(-1)).toBe(
+      "[context edit] turn 2 (assistant) replaced in context",
+    );
+  });
+
+  it("names a tool-result target by its tool and its call's turn", () => {
+    const entries = [
+      makeUserEntry("build it", "u1"),
+      makeBashCallEntry("a1", "call-1", "make"),
+      makeToolResultEntry("r1", "call-1", "bash", true),
+      makeContextEditEntry("e1", "a1", null),
+      makeContextEditEntry("e2", "r1", null),
+    ];
+    expect(formatTranscript(entries)).toBe(
+      [
+        "1. user\nbuild it",
+        "2. assistant [p/m]\n  [tool] bash — command: make → error",
+        "[context edit] turn 2 (assistant) omitted from context",
+        "[context edit] bash result from turn 2 omitted from context",
+      ].join("\n\n---\n\n"),
+    );
+  });
+
+  it("names a target outside the rendered entries by its id", () => {
+    const entries = [makeContextEditEntry("e1", "abc123", null)];
+    expect(formatTranscript(entries)).toBe(
+      "[context edit] entry abc123 (outside this transcript) omitted from context",
+    );
+  });
+
+  it("names a custom-message target", () => {
+    const entries = [
+      {
+        type: "custom_message",
+        id: "c1",
+        parentId: null,
+        timestamp: "t",
+        customType: "my-ext",
+        content: "injected",
+        display: false,
+      },
+      makeContextEditEntry("e1", "c1", null),
+    ];
+    expect(formatTranscript(entries)).toBe(
+      "[context edit] custom message omitted from context",
+    );
+  });
+
+  it("keeps usage entries silent", () => {
+    const entries = [
+      {
+        type: "usage",
+        id: "1",
+        parentId: null,
+        timestamp: "t",
+        kind: "cache_warm",
+        provider: "p",
+        model: "m",
+        usage: { input: 1, output: 0 },
+      },
+    ];
+    expect(formatTranscript(entries)).toBe("");
+  });
+});
+
+/** Shaped after Pi's `SystemMessage` as persisted in real sessions (content `""`). */
+function makeSystemEntry(
+  id: string,
+  fields: {
+    content?: unknown;
+    sections?: Record<string, string | null>;
+    toolsAdded?: { name: string }[];
+    toolsRemoved?: { name: string }[];
+  },
+) {
+  return {
+    type: "message",
+    id,
+    parentId: null,
+    timestamp: "t",
+    message: { role: "system", content: "", timestamp: 0, ...fields },
+  };
+}
+
+function sectionsNamed(...names: string[]): Record<string, string> {
+  return Object.fromEntries(names.map((name) => [name, `<${name}>`]));
+}
+
+function toolsNamed(...names: string[]): { name: string }[] {
+  return names.map((name) => ({ name }));
+}
+
+describe("system messages", () => {
+  const leadingSections = sectionsNamed(
+    "preamble",
+    "tools",
+    "rules",
+    "docs",
+    "addendum",
+    "project_context",
+    "skills",
+    "cwd",
+  );
+  const leadingTools = toolsNamed(
+    ...Array.from({ length: 21 }, (_, i) => `tool${i}`),
+  );
+
+  describe("the first system message, the prompt", () => {
+    it("renders section and tool counts", () => {
+      const entries = [
+        makeSystemEntry("s1", {
+          sections: leadingSections,
+          toolsAdded: leadingTools,
+        }),
+      ];
+      expect(formatTranscript(entries)).toBe(
+        "[system] prompt: 8 sections, 21 tools",
+      );
+    });
+
+    it("uses the singular for one section and one tool", () => {
+      const entries = [
+        makeSystemEntry("s1", {
+          sections: sectionsNamed("preamble"),
+          toolsAdded: toolsNamed("read"),
+        }),
+      ];
+      expect(formatTranscript(entries)).toBe(
+        "[system] prompt: 1 section, 1 tool",
+      );
+    });
+
+    it("counts instruction text by characters", () => {
+      const entries = [
+        makeSystemEntry("s1", {
+          content: [{ type: "text", text: "Be terse." }],
+          sections: sectionsNamed("cwd"),
+        }),
+      ];
+      expect(formatTranscript(entries)).toBe(
+        "[system] prompt: 9 chars, 1 section",
+      );
+    });
+
+    it("renders an empty prompt as empty", () => {
+      expect(formatTranscript([makeSystemEntry("s1", {})])).toBe(
+        "[system] prompt: empty",
+      );
+    });
+
+    it("consumes no turn number", () => {
+      const entries = [
+        makeSystemEntry("s1", { sections: sectionsNamed("cwd") }),
+        makeUserEntry("hello", "u1"),
+      ];
+      expect(formatTranscript(entries)).toBe(
+        "[system] prompt: 1 section\n\n---\n\n1. user\nhello",
+      );
+    });
+  });
+
+  describe("a later system message, an update", () => {
+    const prompt = makeSystemEntry("s1", {
+      sections: leadingSections,
+      toolsAdded: leadingTools,
+    });
+
+    function renderUpdate(update: ReturnType<typeof makeSystemEntry>): string {
+      return formatTranscript([prompt, update]).split("\n\n---\n\n")[1] ?? "";
+    }
+
+    it("names the sections and tools it changes", () => {
+      const update = makeSystemEntry("s2", {
+        sections: sectionsNamed("project_context", "skills"),
+        toolsAdded: toolsNamed("subagent"),
+        toolsRemoved: toolsNamed("subagent"),
+      });
+      expect(renderUpdate(update)).toBe(
+        "[system] update — sections: project_context, skills; tools added: subagent; tools removed: subagent",
+      );
+    });
+
+    it("lists null-valued sections as removed", () => {
+      const update = makeSystemEntry("s2", {
+        sections: { skills: "<skills>", docs: null },
+      });
+      expect(renderUpdate(update)).toBe(
+        "[system] update — sections: skills; sections removed: docs",
+      );
+    });
+
+    it("counts added instruction text by characters", () => {
+      const update = makeSystemEntry("s2", { content: "Stop early." });
+      expect(renderUpdate(update)).toBe(
+        "[system] update — instructions: 11 chars",
+      );
+    });
+
+    it("renders an update with nothing in it as no changes", () => {
+      expect(renderUpdate(makeSystemEntry("s2", {}))).toBe(
+        "[system] update — no changes",
+      );
+    });
   });
 });

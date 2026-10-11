@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { SubagentStatus } from "#src/lifecycle/subagent-state";
+import type { TurnBudget } from "#src/lifecycle/turn-limits";
 import {
 	type OutcomeAddenda,
 	type OutcomeBody,
@@ -23,22 +24,34 @@ function makeOutcome(overrides: Partial<OutcomeBody> = {}): OutcomeBody {
 }
 
 describe("status vocabulary", () => {
-	// One row, spelled out, before the table below generalizes it.
-	it("renders a steered agent in both presentations from the same meaning", () => {
-		expect(renderStatusLabel("steered")).toBe("Wrapped up (reached turn limit)");
-		expect(renderStatusNote("steered")).toBe(" (wrapped up \u2014 reached turn limit)");
+	const warned: TurnBudget = { maxTurns: 2, used: 3, phase: "warned" };
+	const exhausted: TurnBudget = { maxTurns: 2, used: 7, phase: "exhausted" };
+
+	// One case, spelled out, before the status table below generalizes the rest.
+	it("renders a completed run the harness warned as wrapped up, in both presentations", () => {
+		expect(renderStatusLabel({ status: "completed", turnBudget: warned })).toBe("Wrapped up (after turn-budget warning)");
+		expect(renderStatusNote({ status: "completed", turnBudget: warned })).toBe(
+			" (wrapped up \u2014 after turn-budget warning)",
+		);
+	});
+
+	it("renders an aborted run by its status, not its budget", () => {
+		expect(renderStatusLabel({ status: "aborted", turnBudget: exhausted })).toBe(
+			"Aborted (turn limit reached, output may be incomplete)",
+		);
+	});
+
+	it("renders a completed run within its budget as done", () => {
+		const within: TurnBudget = { maxTurns: 5, used: 2, phase: "within" };
+		expect(renderStatusLabel({ status: "completed", turnBudget: within })).toBe("Done");
+		expect(renderStatusNote({ status: "completed", turnBudget: within })).toBe("");
 	});
 
 	const rows: { status: SubagentStatus; label: string; note: string }[] = [
 		{
 			status: "aborted",
-			label: "Aborted (max turns exceeded, output may be incomplete)",
-			note: " (aborted \u2014 max turns exceeded, output may be incomplete)",
-		},
-		{
-			status: "steered",
-			label: "Wrapped up (reached turn limit)",
-			note: " (wrapped up \u2014 reached turn limit)",
+			label: "Aborted (turn limit reached, output may be incomplete)",
+			note: " (aborted \u2014 turn limit reached, output may be incomplete)",
 		},
 		{ status: "stopped", label: "Stopped (user request)", note: " (stopped \u2014 user request)" },
 		{ status: "completed", label: "Done", note: "" },
@@ -48,24 +61,24 @@ describe("status vocabulary", () => {
 
 	for (const row of rows) {
 		it(`renders "${row.status}" as label ${JSON.stringify(row.label)}`, () => {
-			expect(renderStatusLabel(row.status)).toBe(row.label);
+			expect(renderStatusLabel({ status: row.status })).toBe(row.label);
 		});
 
 		it(`renders "${row.status}" as note ${JSON.stringify(row.note)}`, () => {
-			expect(renderStatusNote(row.status)).toBe(row.note);
+			expect(renderStatusNote({ status: row.status })).toBe(row.note);
 		});
 	}
 
 	it("names the error in the label form", () => {
-		expect(renderStatusLabel("error", "timeout")).toBe("Error: timeout");
+		expect(renderStatusLabel({ status: "error", error: "timeout" })).toBe("Error: timeout");
 	});
 
 	it("reports an unknown error when none was captured", () => {
-		expect(renderStatusLabel("error")).toBe("Error: unknown");
+		expect(renderStatusLabel({ status: "error" })).toBe("Error: unknown");
 	});
 
 	it("adds no note for an error, whose body already carries the message", () => {
-		expect(renderStatusNote("error")).toBe("");
+		expect(renderStatusNote({ status: "error" })).toBe("");
 	});
 });
 

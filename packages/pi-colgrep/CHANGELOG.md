@@ -1,5 +1,16 @@
 # Changelog
 
+## [2.0.0](https://github.com/gotgenes/pi-packages/compare/pi-colgrep-v1.5.4...pi-colgrep-v2.0.0) (2026-10-04)
+
+
+### Features
+
+* **pi-colgrep:** **breaking:** require Pi 1.0.0 or later ([e84acaf](https://github.com/gotgenes/pi-packages/commit/e84acaf4245e89578dd66fe4a5963cb1cef2c188)), closes [#1003](https://github.com/gotgenes/pi-packages/issues/1003)
+
+### Bug Fixes
+
+* **pi-colgrep:** show a failed search as an error in the collapsed result ([#1003](https://github.com/gotgenes/pi-packages/issues/1003)) ([17c75f5](https://github.com/gotgenes/pi-packages/commit/17c75f5cf8b40355283e7d5a50e620a76365f76b))
+
 ## [1.5.4](https://github.com/gotgenes/pi-packages/compare/pi-colgrep-v1.5.3...pi-colgrep-v1.5.4) (2026-09-29)
 
 

@@ -279,6 +279,51 @@ describe("resolveSpawnConfig — thinking level", () => {
   });
 });
 
+describe("resolveSpawnConfig — minimum turns note", () => {
+  const MINIMUM_NOTE =
+    "Note: max_turns 1 is below the minimum of 2 (one turn to work, one to answer), so the subagent runs with 2.";
+
+  it("notes a max_turns parameter below the minimum and runs with 2", () => {
+    const result = resolveSpawnConfig(
+      { subagent_type: "Explore", prompt: "test", description: "d", max_turns: 1 },
+      testRegistry,
+      makeModelInfo(),
+      defaultSettings,
+    );
+    if ("error" in result) throw new Error(result.error);
+    expect(result.notes).toEqual([MINIMUM_NOTE]);
+    expect(result.execution.effectiveMaxTurns).toBe(2);
+  });
+
+  it("notes an agent file's max_turns below the minimum", () => {
+    const registry = new AgentTypeRegistry(
+      () =>
+        new Map([
+          ["terse", { name: "terse", description: "Terse", systemPrompt: "", promptMode: "append" as const, maxTurns: 1 }],
+        ]),
+    );
+    const result = resolveSpawnConfig(
+      { subagent_type: "terse", prompt: "test", description: "d" },
+      registry,
+      makeModelInfo(),
+      defaultSettings,
+    );
+    if ("error" in result) throw new Error(result.error);
+    expect(result.notes).toEqual([MINIMUM_NOTE]);
+  });
+
+  it("adds no note at the minimum", () => {
+    const result = resolveSpawnConfig(
+      { subagent_type: "Explore", prompt: "test", description: "d", max_turns: 2 },
+      testRegistry,
+      makeModelInfo(),
+      defaultSettings,
+    );
+    if ("error" in result) throw new Error(result.error);
+    expect(result.notes).toEqual([]);
+  });
+});
+
 describe("resolveSpawnConfig — notes", () => {
   it("carries no note for a known agent type", () => {
     const result = resolveSpawnConfig(

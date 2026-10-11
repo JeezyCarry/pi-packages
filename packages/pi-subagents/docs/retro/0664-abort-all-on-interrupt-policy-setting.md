@@ -9,8 +9,7 @@ issue_title: "pi-subagents: ESC (parent interrupt) aborts all background agents 
 
 ### Session summary
 
-## 664 is a proposal from @daoguademeng (not a defect report) asking whether ESC aborting every background agent should become a policy setting rather than fixed behavior
-
+#664 is a proposal from @daoguademeng (not a defect report) asking whether ESC aborting every background agent should become a policy setting rather than fixed behavior.
 It surfaced while reviewing that contributor's PR #665, and the operator opted to **accept the design and implement it in-repo ourselves** rather than take the contributor's existing patch.
 The discussion also produced a mechanical trace of Pi's ESC handling, which ruled out a richer interactive design on ESC itself and spun out #676.
 
@@ -25,7 +24,7 @@ The discussion also produced a mechanical trace of Pi's ESC handling, which rule
 
 The touch point is `InterruptHandler` (`src/handlers/interrupt.ts`), which latches the parent turn signal and calls `manager.abortAll()` when it fires.
 
-#### Attribution and communication
+### Attribution and communication
 
 **Do not comment on #664 until our work is delivered.**
 The operator's explicit call: we say nothing now, and explain what we did once it ships.
@@ -42,7 +41,7 @@ Open choice for the implementation session: whether to read the contributor's br
 Reading it makes co-authorship unambiguous; not reading it keeps our implementation independent.
 Either way the trailer goes on, since the design itself is theirs.
 
-#### Why the richer ESC design is not reachable
+### Why the richer ESC design is not reachable
 
 The operator's instinct was that ESC is *ambiguous* when both the parent and background agents are running, and that the right answer is to ask — a menu offering "stop the main agent," "stop the background ones," "stop one," "stop everything," with repeated presses escalating toward stop-it-all.
 That design is sound but cannot be built on ESC.
@@ -65,15 +64,13 @@ Two further constraints worth remembering:
 - `ui.onTerminalInput()` returns `{ consume?: boolean }` and *could* swallow ESC before the editor sees it.
   Rejected: it routes around Pi's reserved-key policy through a side door and would have this package seize the global interrupt key even when no subagents exist.
 
-#### Follow-on
+### Follow-on
 
-## 676 carries the reachable half of the operator's design: dedicated shortcuts we own, which fire *before* anything is aborted, so every outcome is still live
-
+#676 carries the reachable half of the operator's design: dedicated shortcuts we own, which fire *before* anything is aborted, so every outcome is still live.
 Agreed shape there is two keys — an immediate "stop all subagents" fast path plus a picker for one/all/everything — both configurable through the package's existing `loadLayeredSettings` config with defaults.
 
-## 664 and #676 are independent and can land in either order
-
-## 664 governs what ESC destroys by default; #676 governs whether the operator has a deliberate alternative to reaching for ESC at all
+#664 and #676 are independent and can land in either order.
+#664 governs what ESC destroys by default; #676 governs whether the operator has a deliberate alternative to reaching for ESC at all.
 
 Unrelated to both: #674 tracks the queued-stop lifecycle defect from the same contributor's PR #665.
 

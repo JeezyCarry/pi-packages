@@ -1,6 +1,6 @@
 {
   "name": "@gotgenes/pi-subagents",
-  "version": "21.9.0",
+  "version": "23.4.0",
   "type": "module",
   "exports": {
     ".": {
@@ -50,9 +50,9 @@
     "access": "public"
   },
   "peerDependencies": {
-    "@earendil-works/pi-ai": ">=0.75.0",
-    "@earendil-works/pi-coding-agent": ">=0.81.0",
-    "@earendil-works/pi-tui": ">=0.75.0",
+    "@earendil-works/pi-ai": ">=1.0.0",
+    "@earendil-works/pi-coding-agent": ">=1.0.0",
+    "@earendil-works/pi-tui": ">=1.0.0",
     "typebox": "*"
   },
   "engines": {
@@ -70,9 +70,9 @@
   },
   "devDependencies": {
     "@biomejs/biome": "catalog:",
-    "@earendil-works/pi-ai": "0.84.4",
-    "@earendil-works/pi-coding-agent": "0.84.4",
-    "@earendil-works/pi-tui": "0.84.4",
+    "@earendil-works/pi-ai": "1.0.0",
+    "@earendil-works/pi-coding-agent": "1.0.0",
+    "@earendil-works/pi-tui": "1.0.0",
     "@types/node": "catalog:",
     "rollup": "catalog:",
     "rollup-plugin-dts": "catalog:",
@@ -85,7 +85,6 @@
     "extensions": [
       "./src/index.ts"
     ],
-    "video": "https://github.com/gotgenes/pi-subagents/raw/main/media/demo.mp4",
-    "image": "https://github.com/gotgenes/pi-subagents/raw/main/media/screenshot.png"
+    "image": "https://raw.githubusercontent.com/gotgenes/pi-packages/main/packages/pi-subagents/docs/assets/demo.webp"
   }
 }

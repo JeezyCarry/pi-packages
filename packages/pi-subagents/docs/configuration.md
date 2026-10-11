@@ -26,14 +26,14 @@ Its own preamble and tool guidelines come first, then your `AGENTS.md` or `CLAUD
 A child inherits only the **stable identity** layers: everything up to, but not including, the skills catalogue.
 The layers after it are resolved against one session, so Pi and the child's own extensions rebuild them for the child rather than the child borrowing the parent's:
 
-| Layer                              | Where a child's copy comes from                                                                         |
-| ---------------------------------- | ------------------------------------------------------------------------------------------------------- |
-| Pi preamble                        | inherited from the parent, byte for byte                                                                |
-| `<project_context>`                | inherited byte for byte, unless the child runs in its own directory — then resolved from that directory |
-| `Available tools:` / `Guidelines:` | stated by the child's own `@gotgenes/pi-permission-system`                                              |
-| Skills catalogue                   | rebuilt by Pi for the child's own directory and tool set                                                |
-| `Current working directory:`       | rebuilt by Pi for the child's own directory                                                             |
-| Extension-appended blocks          | rebuilt by the child's own extensions                                                                   |
+| Layer                        | Where a child's copy comes from                                                                              |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| Pi preamble                  | inherited from the parent, byte for byte                                                                     |
+| `<project_context>`          | inherited byte for byte, unless the child runs in its own directory — then resolved from that directory      |
+| `<tools>` / `<rules>`        | never inherited; stated by the child's own `@gotgenes/pi-permission-system` when installed, otherwise absent |
+| Skills catalogue             | rebuilt by Pi for the child's own directory and tool set                                                     |
+| `Current working directory:` | rebuilt by Pi for the child's own directory                                                                  |
+| Extension-appended blocks    | rebuilt by the child's own extensions                                                                        |
 
 This matters most for a child that runs somewhere other than the parent — one given an isolated workspace by a `WorkspaceProvider`.
 Its skills resolve from its own workspace, and its working-directory claim names that workspace.
@@ -47,11 +47,13 @@ A `WorkspaceProvider` whose workspace is not a checkout — a bare sandbox direc
 Inheriting the identity rather than the whole prompt also gives the child a leading prefix it shares with the parent, which local inference engines reuse instead of reprocessing.
 How much that is worth depends on the host: a provider whose cache prefix covers the tool definitions ahead of the system prompt — Anthropic's does — reuses nothing for a child, because a child's tool set always differs from its parent's.
 
-The tool sections are listed above as the child's own rather than inherited because `@gotgenes/pi-permission-system` relocates them to the end of the prompt, so each session states the tools it actually holds without editing the bytes a child inherits.
-Without that extension installed, a child inherits the parent's `Available tools:` listing unchanged, which names the parent's tools rather than the child's ([#901]).
+Pi renders the `<tools>` and `<rules>` sections from one session's tool set, and writes neither for a child, so a child drops its parent's copies rather than presenting the parent's tools as its own.
+With `@gotgenes/pi-permission-system` installed, the child states its own after its working directory.
+Without it, a child carries no tool list or guidelines in its prompt; its tool definitions still name exactly the tools it holds ([#901]).
+On Pi releases before 0.86, which render the tool surface as untagged `Available tools:` prose, the child inherits the parent's listing unchanged.
 
 If you write extensions that add to the system prompt, see [Extensions that append to the system prompt](../README.md#extensions-that-append-to-the-system-prompt).
-The reasoning behind the boundary is recorded in [ADR 0006](decisions/0006-inherited-prompt-is-identity-only.md), and what the inherited region guarantees in [ADR 0008](decisions/0008-inherited-region-is-shared-parts.md).
+The reasoning behind the boundary is recorded in [ADR 0006](decisions/0006-inherited-prompt-is-identity-only.md), what the inherited region guarantees in [ADR 0008](decisions/0008-inherited-region-is-shared-parts.md), and why the tool sections are dropped in [ADR 0011](decisions/0011-tool-surface-sections-are-session-resolved.md).
 
 ### Portable inheritance (opt-in)
 
@@ -145,7 +147,7 @@ All fields are optional — sensible defaults for everything.
 | `tools`             | all 7          | The agent's complete tool allowlist — built-in or extension-registered names. `none` for no tools. See [Tool selection](#tool-selection)                                                                                                      |
 | `model`             | inherit parent | Model — `provider/modelId` or fuzzy name (`"haiku"`, `"sonnet"`)                                                                                                                                                                              |
 | `thinking`          | inherit        | off, minimal, low, medium, high, xhigh, max. An unrecognized value is dropped, and the agent inherits the parent's level                                                                                                                      |
-| `max_turns`         | unlimited      | Max agentic turns before graceful shutdown. `0` or omit for unlimited                                                                                                                                                                         |
+| `max_turns`         | unlimited      | Turn ceiling: the harness stops the agent after this many turns (minimum 2). `0` or omit for unlimited                                                                                                                                        |
 | `prompt_mode`       | `append`       | `replace`: parent prompt is the cacheable base; body is appended last with full control and no `<agent_instructions>` wrapper. `append`: parent prompt is the base; body is wrapped in `<agent_instructions>` (agent acts as a "parent twin") |
 | `inherit_context`   | `false`        | Fork parent conversation into agent                                                                                                                                                                                                           |
 | `run_in_background` | `false`        | Run in background by default                                                                                                                                                                                                                  |
@@ -238,9 +240,56 @@ Two other settings interact with this list:
 - When [`@gotgenes/pi-permission-system`](https://github.com/gotgenes/pi-packages/tree/main/packages/pi-permission-system) is installed, its `permission:` frontmatter narrows the set further, per turn.
   Use it to deny a tool; use `tools` to decide what the agent has in the first place.
 
+#### Codemode, `tool_search`, and MCP tools
+
+Pi supplies `codemode`, `tool_search`, and MCP tools through built-in extensions.
+A child loads one only when its `tools` list names a tool that extension supplies:
+
+| Name in `tools`                                                                                          | Built-in the child loads |
+| -------------------------------------------------------------------------------------------------------- | ------------------------ |
+| `codemode`                                                                                               | codemode                 |
+| `tool_search`                                                                                            | tool-search              |
+| any `mcp__<server>__<tool>`, `list_mcp_resources`, `list_mcp_resource_templates`, or `read_mcp_resource` | MCP                      |
+
+A child that names none of them loads none of them.
+That matters for MCP, which starts every enabled server in your `mcp.json` when it loads, whether or not the child can reach that server's tools.
+A built-in you disabled in your Pi settings (for example `"extensions": ["-builtin:mcp"]`) stays disabled in children, and an extension that replaces a built-in in your session replaces it in children too.
+
+Pi names each MCP tool `mcp__<server>__<tool>`, where `<server>` is the server's key in `mcp.json`.
+Characters other than letters, digits, and `_` become `_`, and a name longer than 64 characters, or one that collides with another tool's, gets a hash suffix; a pattern saves you writing those by hand.
+An MCP server's tools are exposed `codemode` by default: the model calls them from a `codemode` script, so the agent must name `codemode` as well.
+A server configured with `deferred` exposure needs `tool_search` instead; a `direct` one needs neither.
+The child does not add these for you.
+
+You can name each MCP tool:
+
+```yaml
+---
+description: Triage GitHub issues
+tools: read, codemode, mcp__github__get_issue, mcp__github__list_issues, mcp__github__search_issues
+---
+```
+
+Or name a whole server, or a prefix of its tools, with `*`:
+
+```yaml
+tools: read, codemode, mcp__github__*                            # every github tool
+tools: read, codemode, mcp__github__get_*, mcp__github__list_*   # a read-shaped subset
+tools: read, codemode, mcp__*                                    # every MCP tool
+```
+
+A pattern is any entry that starts with `mcp__` and contains `*`, which matches any run of characters.
+`*` in any other entry is not special.
+The pattern expands when the agent spawns, to the matching tools **your session** has registered at that moment:
+
+- A server that has not connected yet (still starting, signed out, or disabled) contributes no tools, so the pattern matches nothing and is dropped.
+  Set `PI_SUBAGENTS_DEBUG=1` to see which patterns matched nothing.
+- A child running in another directory (a worktree) expands against your session's servers, even when that directory's `.pi/mcp.json` configures different ones.
+- Tools a server adds after the child started do not reach that child.
+
 ## Persistent Settings
 
-Runtime tuning values set via `/subagents:settings` (max concurrency, default max turns, grace turns, the two session-retention windows, the abort-on-interrupt policy, and the mid-run update channel) persist across pi restarts.
+Runtime tuning values set via `/subagents:settings` (max concurrency, default max turns, wrap-up turns, the two session-retention windows, the abort-on-interrupt policy, and the mid-run update channel) persist across pi restarts.
 A completed subagent's record is kept for the whole parent session (so `get_subagent_result` never misses); only its heavy in-memory session is released — after `consumedSessionRetentionMinutes` once the result has been collected, or after the `unconsumedSessionRetentionMinutes` safety cap if it never was.
 An agent that asked a question and has not been answered holds the safety cap rather than the consumed window, because reading a question is not finishing with the agent — the answer is delivered by resuming the very session the short window would release.
 
@@ -254,7 +303,7 @@ Two files, merged on load:
   Written by `/subagents:settings`.
 
 **Precedence:** project overrides global on any field present in both.
-Missing fields fall back to the hardcoded defaults (max concurrency `4`, default max turns unlimited, grace turns `5`, consumed-session retention `10` minutes, unconsumed-session retention `720` minutes, abort-all-on-interrupt `true`, mid-run updates `true`).
+Missing fields fall back to the hardcoded defaults (max concurrency `4`, default max turns unlimited, wrap-up turns `2`, consumed-session retention `10` minutes, unconsumed-session retention `720` minutes, abort-all-on-interrupt `true`, mid-run updates `true`).
 
 **Example — global defaults for a beefy machine:**
 
@@ -263,7 +312,7 @@ mkdir -p ~/.pi/agent
 cat > ~/.pi/agent/subagents.json <<'EOF'
 {
   "maxConcurrent": 16,
-  "graceTurns": 10,
+  "wrapUpTurns": 3,
   "unconsumedSessionRetentionMinutes": 1440,
   "abortAllOnInterrupt": false,
   "midRunUpdates": true
@@ -271,8 +320,12 @@ cat > ~/.pi/agent/subagents.json <<'EOF'
 EOF
 ```
 
-Every project now starts with concurrency 16, grace 10, and ESC left to the parent, without ever touching the command.
+Every project now starts with concurrency 16, a three-turn wrap-up warning, and ESC left to the parent, without ever touching the command.
 Individual projects can still override via `/subagents:settings`.
+
+`wrapUpTurns` is how many turns an agent has left when it is warned about its budget; see [Turn Budget](../README.md#turn-budget).
+It replaced `graceTurns`, which allowed extra turns past `max_turns`: a file that still sets `graceTurns` logs a `[pi-subagents] graceTurns was removed…` warning and the key is ignored, so replace it with `wrapUpTurns`.
+A `defaultMaxTurns` of `1` runs with `2`, the minimum, and logs a warning.
 
 **Failure behavior:** missing file is silent; malformed JSON logs a `[pi-subagents] Ignoring malformed settings at …` warning to stderr; invalid/out-of-range field values are dropped per-field; write failures downgrade the `/subagents:settings` toast to a warning with `(session only; failed to persist)`.
 
@@ -359,8 +412,7 @@ Inheritance is a **snapshot taken when the agent spawns**.
 A provider registered in the parent after a child has started does not appear in that running child; agents spawned afterwards pick it up.
 This matches the rest of the parent state a child captures at spawn — working directory, model, and system prompt are all frozen the same way.
 
-Provider inheritance needs no configuration.
-It does require Pi 0.81.0 or newer, which is the floor this package declares — that is the release where the model registry began exposing every runtime registration for replay.
+Provider inheritance needs no configuration, and every Pi release this package supports (1.0.0 or newer) exposes the runtime registrations it replays.
 
 One thing the child does still share with the parent: when a provider's API key is a shell command (`"apiKey": "!my-command"`), Pi caches the command's resolved output process-wide, so parent and children reuse one result rather than re-running it per agent.
 That cache is Pi's, not this extension's, and it predates provider inheritance.

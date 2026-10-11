@@ -169,14 +169,13 @@ describe("formatAgentReport", () => {
 			makeReport({ status: "aborted", result: "Half of the inv" }),
 		);
 
-		expect(text).toContain("aborted \u2014 max turns exceeded, output may be incomplete");
+		expect(text).toContain("aborted \u2014 turn limit reached, output may be incomplete");
 		expect(text).toContain("Half of the inv");
 	});
 
-	it("names a turn-limit wrap-up", () => {
-		expect(formatAgentReport(makeReport({ status: "steered" }))).toContain(
-			"wrapped up \u2014 reached turn limit",
-		);
+	it("names a turn-limit wrap-up on a completed run the harness warned", () => {
+		const report = makeReport({ status: "completed", turnBudget: { maxTurns: 2, used: 3, phase: "warned" } });
+		expect(formatAgentReport(report)).toContain("Status: completed (wrapped up \u2014 after turn-budget warning) |");
 	});
 
 	it("adds no status note for a plain completion", () => {
@@ -237,5 +236,92 @@ describe("formatAgentReport", () => {
 	it("omits the transcript line when transcriptPath is absent", () => {
 		const text = formatAgentReport(makeReport({ transcriptPath: undefined }));
 		expect(text).not.toContain("Full transcript available at:");
+	});
+
+	describe("a running agent's progress", () => {
+		const running = { status: "running" as const, result: undefined, duration: "80.0s (running)" };
+
+		it("names the activity, turns used, and time since the last progress before the description", () => {
+			const text = formatAgentReport(
+				makeReport({
+					...running,
+					progress: { activity: "running command\u2026", turns: 7, sinceLastProgress: "72.0s" },
+				}),
+			);
+			expect(text).toBe(
+				"Agent: agent-1\n" +
+					"Type: General | Status: running | Tool uses: 3 | Duration: 80.0s (running)\n" +
+					"Progress: running command\u2026 | Turns: 7 | Last progress: 72.0s ago\n" +
+					"Description: Investigate the bug\n\n" +
+					"Agent is still running. Use wait: true or check back later.",
+			);
+		});
+
+		it("omits the turns before the run reports a budget", () => {
+			const text = formatAgentReport(
+				makeReport({
+					...running,
+					progress: { activity: "thinking\u2026", turns: undefined, sinceLastProgress: "3.0s" },
+				}),
+			);
+			expect(text).toContain("\nProgress: thinking\u2026 | Last progress: 3.0s ago\n");
+		});
+
+		it("adds no progress line when the report carries none", () => {
+			const text = formatAgentReport(makeReport(running));
+			expect(text).not.toContain("Progress:");
+		});
+	});
+
+	describe("a wait that ended at its bound", () => {
+		it("says the agent was not stopped and what to do instead of waiting again, before the transcript pointer", () => {
+			const text = formatAgentReport(
+				makeReport({
+					status: "running",
+					result: undefined,
+					duration: "130.0s (running)",
+					waitExpiredAfter: 120,
+					transcriptPath: "/tasks/agent.jsonl",
+				}),
+			);
+			expect(text).toBe(
+				"Agent: agent-1\n" +
+					"Type: General | Status: running | Tool uses: 3 | Duration: 130.0s (running)\n" +
+					"Description: Investigate the bug\n\n" +
+					"Agent is still running. Use wait: true or check back later.\n\n" +
+					"This wait ended after its 120s timeout. The agent was not stopped and is still running.\n" +
+					"If its progress has not changed since your last check, waiting again will not unstick it: " +
+					"read its transcript, steer it with steer_subagent, or tell the user it appears stuck.\n\n" +
+					"Full transcript available at: /tasks/agent.jsonl",
+			);
+		});
+	});
+
+	describe("an agent resumed while the call waited", () => {
+		it("closes the outcome by saying the agent is running again, before the transcript pointer", () => {
+			const text = formatAgentReport(
+				makeReport({ resumedWhileWaiting: true, transcriptPath: "/tasks/agent.jsonl" }),
+			);
+			expect(text).toBe(
+				"Agent: agent-1\n" +
+					"Type: General | Status: completed | Tool uses: 3 | Duration: 12.3s\n" +
+					"Description: Investigate the bug\n\n" +
+					"All done.\n\n" +
+					"This agent was resumed before this wait returned and is running again \u2014 " +
+					"call get_subagent_result for that run's outcome.\n\n" +
+					"Full transcript available at: /tasks/agent.jsonl",
+			);
+		});
+
+		it("adds nothing for an agent that was not resumed", () => {
+			const text = formatAgentReport(makeReport({ transcriptPath: "/tasks/agent.jsonl" }));
+			expect(text).toBe(
+				"Agent: agent-1\n" +
+					"Type: General | Status: completed | Tool uses: 3 | Duration: 12.3s\n" +
+					"Description: Investigate the bug\n\n" +
+					"All done.\n\n" +
+					"Full transcript available at: /tasks/agent.jsonl",
+			);
+		});
 	});
 });

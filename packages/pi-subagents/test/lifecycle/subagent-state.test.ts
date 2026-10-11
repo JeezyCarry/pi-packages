@@ -7,12 +7,12 @@ import {
 	type SubagentStateInit,
 	type SubagentStatus,
 } from "#src/lifecycle/subagent-state";
+import type { TurnBudget } from "#src/lifecycle/turn-limits";
 
 const ALL_STATUSES: SubagentStatus[] = [
 	"queued",
 	"running",
 	"completed",
-	"steered",
 	"aborted",
 	"stopped",
 	"error",
@@ -41,7 +41,6 @@ describe("SubagentState — constructor", () => {
 
 	it("defaults live-activity fields", () => {
 		const state = new SubagentState();
-		expect(state.turnCount).toBe(1);
 		expect(state.responseText).toBe("");
 		expect(state.activeTools.size).toBe(0);
 	});
@@ -90,11 +89,9 @@ describe("SubagentState — constructor full-value seeding", () => {
 
 	it("seeds live-activity fields", () => {
 		const state = new SubagentState({
-			turnCount: 3,
 			activeTools: ["read", "bash"],
 			responseText: "partial output",
 		});
-		expect(state.turnCount).toBe(3);
 		expect([...state.activeTools.values()]).toEqual(["read", "bash"]);
 		expect(state.responseText).toBe("partial output");
 	});
@@ -164,24 +161,6 @@ describe("SubagentState — markAborted", () => {
 		state.markAborted("partial", 2000);
 		expect(state.status).toBe("stopped");
 		expect(state.result).toBe("partial");
-		expect(state.completedAt).toBe(500);
-	});
-});
-
-describe("SubagentState — markSteered", () => {
-	it("sets status to 'steered' with result and completedAt", () => {
-		const state = new SubagentState({ status: "running" });
-		state.markSteered("redirected", 4000);
-		expect(state.status).toBe("steered");
-		expect(state.result).toBe("redirected");
-		expect(state.completedAt).toBe(4000);
-	});
-
-	it("preserves status when already stopped, but still sets result", () => {
-		const state = new SubagentState({ status: "stopped", completedAt: 500 });
-		state.markSteered("redirected", 2000);
-		expect(state.status).toBe("stopped");
-		expect(state.result).toBe("redirected");
 		expect(state.completedAt).toBe(500);
 	});
 });
@@ -343,6 +322,129 @@ describe("SubagentState — resetForResume", () => {
 		expect(state.consumedAt).toBeUndefined();
 		expect(state.consumed).toBe(false);
 	});
+
+	describe("run ordinal", () => {
+		it("numbers the first run 1", () => {
+			const state = new SubagentState({ status: "queued" });
+			expect(state.run).toBe(1);
+		});
+
+		it("does not count the first run's start as a new run", () => {
+			const state = new SubagentState({ status: "queued" });
+			state.markRunning(1000);
+			expect(state.run).toBe(1);
+		});
+
+		it("counts each resume as a new run", () => {
+			const state = new SubagentState({ status: "completed" });
+			state.resetForResume(9000);
+			state.markCompleted("second", 9500);
+			state.resetForResume(9900);
+			expect(state.run).toBe(3);
+		});
+	});
+
+	describe("superseded outcome", () => {
+		it("retains what the reset run ended with", () => {
+			const state = new SubagentState({
+				status: "completed",
+				result: "first result",
+				startedAt: 1000,
+				completedAt: 5000,
+				pendingQuestion: "Which one?",
+				workspaceNotice: "Saved to branch x.",
+			});
+			state.recordUpdate("owed");
+			state.recordUpdate("announced");
+			state.markUpdateAnnounced("announced");
+
+			state.resetForResume(9000);
+
+			expect(state.supersededOutcome(1)).toEqual({
+				status: "completed",
+				result: "first result",
+				error: undefined,
+				startedAt: 1000,
+				completedAt: 5000,
+				pendingQuestion: "Which one?",
+				workspaceNotice: "Saved to branch x.",
+				runUpdates: ["owed"],
+			});
+		});
+
+		it("answers nothing for the run still current", () => {
+			const state = new SubagentState({ status: "completed", result: "first result" });
+			state.resetForResume(9000);
+			expect(state.supersededOutcome(2)).toBeUndefined();
+		});
+
+		it("answers nothing before any resume", () => {
+			const state = new SubagentState({ status: "completed", result: "first result" });
+			expect(state.supersededOutcome(1)).toBeUndefined();
+		});
+
+		it("keeps only the most recently superseded run", () => {
+			const state = new SubagentState({ status: "completed", result: "first result" });
+			state.resetForResume(9000);
+			state.markCompleted("second result", 9500);
+			state.resetForResume(9900);
+
+			expect(state.supersededOutcome(1)).toBeUndefined();
+			expect(state.supersededOutcome(2)?.result).toBe("second result");
+		});
+	});
+});
+
+describe("SubagentState — turn budget", () => {
+	const WITHIN: TurnBudget = { maxTurns: 5, used: 1, phase: "within" };
+	const WARNED: TurnBudget = { maxTurns: 5, used: 3, phase: "warned" };
+	const EXHAUSTED: TurnBudget = { maxTurns: 5, used: 5, phase: "exhausted" };
+
+	it("has no budget until a run's turn loop reports one", () => {
+		expect(new SubagentState().turnBudget).toBeUndefined();
+	});
+
+	it("seeds the budget from init", () => {
+		expect(new SubagentState({ turnBudget: WARNED }).turnBudget).toEqual(WARNED);
+	});
+
+	it("records each budget the running turn loop reports", () => {
+		const state = new SubagentState({ status: "running" });
+		state.setTurnBudget(WITHIN);
+		expect(state.turnBudget).toEqual(WITHIN);
+		state.setTurnBudget(WARNED);
+		expect(state.turnBudget).toEqual(WARNED);
+	});
+
+	it("keeps the live budget through a terminal transition", () => {
+		const state = new SubagentState({ status: "running" });
+		state.setTurnBudget(EXHAUSTED);
+		state.markAborted("partial", 5000);
+		expect(state.turnBudget).toEqual(EXHAUSTED);
+	});
+
+	it("a stop during the warned phase keeps stopped and the budget the loop reached", () => {
+		const state = new SubagentState({ status: "running" });
+		state.setTurnBudget(WARNED);
+		state.markStopped(500);
+		state.markCompleted("late", 2000);
+		expect(state.status).toBe("stopped");
+		expect(state.turnBudget).toEqual(WARNED);
+	});
+
+	it("resetForResume clears the budget, which belongs to the run that produced it", () => {
+		const state = new SubagentState({ status: "completed", turnBudget: WARNED });
+		state.resetForResume(9000);
+		expect(state.turnBudget).toBeUndefined();
+	});
+
+	it("a superseded outcome keeps the budget the reset run ended with", () => {
+		const state = new SubagentState({ status: "running", result: "first" });
+		state.setTurnBudget(WARNED);
+		state.markCompleted("first", 5000);
+		state.resetForResume(9000);
+		expect(state.supersededOutcome(1)?.turnBudget).toEqual(WARNED);
+	});
 });
 
 describe("SubagentState — consumption", () => {
@@ -394,16 +496,16 @@ describe("SubagentState — carrier claim", () => {
 		expect(state.claimed).toBe(true);
 	});
 
-	it("release hands responsibility back", () => {
+	it("releaseClaims hands responsibility back", () => {
 		const state = new SubagentState({ status: "running" });
 		state.claim();
-		state.release();
+		state.releaseClaims();
 		expect(state.claimed).toBe(false);
 	});
 
-	it("release without a prior claim is a no-op", () => {
+	it("releaseClaims without a prior claim is a no-op", () => {
 		const state = new SubagentState({ status: "running" });
-		state.release();
+		state.releaseClaims();
 		expect(state.claimed).toBe(false);
 	});
 
@@ -419,9 +521,64 @@ describe("SubagentState — carrier claim", () => {
 		state.claim();
 		expect(state.consumed).toBe(false);
 		state.markConsumed(5000);
-		state.release();
+		state.releaseClaims();
 		expect(state.claimed).toBe(false);
 		expect(state.consumedAt).toBe(5000);
+	});
+
+	describe("claim handles", () => {
+		it("keeps the outcome claimed while another holder remains", () => {
+			const state = new SubagentState({ status: "running" });
+			const first = state.claim();
+			state.claim();
+
+			first.release();
+
+			expect(state.claimed).toBe(true);
+		});
+
+		it("hands responsibility back once every holder released", () => {
+			const state = new SubagentState({ status: "running" });
+			const first = state.claim();
+			const second = state.claim();
+
+			second.release();
+			first.release();
+
+			expect(state.claimed).toBe(false);
+		});
+
+		it("releasing one handle twice drops only its own claim", () => {
+			const state = new SubagentState({ status: "running" });
+			const first = state.claim();
+			state.claim();
+
+			first.release();
+			first.release();
+
+			expect(state.claimed).toBe(true);
+		});
+
+		it("releaseClaims clears every holder", () => {
+			const state = new SubagentState({ status: "running" });
+			state.claim();
+			state.claim();
+
+			state.releaseClaims();
+
+			expect(state.claimed).toBe(false);
+		});
+
+		it("a handle released after releaseClaims leaves a later claim in place", () => {
+			const state = new SubagentState({ status: "running" });
+			const stale = state.claim();
+			state.releaseClaims();
+			state.claim();
+
+			stale.release();
+
+			expect(state.claimed).toBe(true);
+		});
 	});
 
 	it("survives resetForResume, which clears consumption but not the claim", () => {
@@ -431,21 +588,6 @@ describe("SubagentState — carrier claim", () => {
 		state.resetForResume(7000);
 		expect(state.claimed).toBe(true);
 		expect(state.consumedAt).toBeUndefined();
-	});
-});
-
-describe("SubagentState — turnCount", () => {
-	it("defaults to 1", () => {
-		const state = new SubagentState();
-		expect(state.turnCount).toBe(1);
-	});
-
-	it("increments by 1 on each incrementTurnCount call", () => {
-		const state = new SubagentState();
-		state.incrementTurnCount();
-		expect(state.turnCount).toBe(2);
-		state.incrementTurnCount();
-		expect(state.turnCount).toBe(3);
 	});
 });
 
@@ -641,5 +783,45 @@ describe("SubagentState — run updates", () => {
 
 			expect(state.runUpdates).toEqual(["From this run."]);
 		});
+	});
+});
+
+describe("SubagentState — lastProgressAt", () => {
+	it("is seeded from startedAt", () => {
+		const state = new SubagentState({ startedAt: 1000 });
+
+		expect(state.lastProgressAt).toBe(1000);
+	});
+
+	it("is seeded from an explicit value", () => {
+		const state = new SubagentState({ startedAt: 1000, lastProgressAt: 4000 });
+
+		expect(state.lastProgressAt).toBe(4000);
+	});
+
+	it("is stamped by markProgress", () => {
+		const state = new SubagentState({ startedAt: 1000 });
+
+		state.markProgress(2500);
+
+		expect(state.lastProgressAt).toBe(2500);
+	});
+
+	it("restarts at the run's start when the run begins", () => {
+		const state = new SubagentState({ status: "queued", startedAt: 1000 });
+		state.markProgress(9000);
+
+		state.markRunning(5000);
+
+		expect(state.lastProgressAt).toBe(5000);
+	});
+
+	it("restarts at the resumed run's start on resume", () => {
+		const state = new SubagentState({ status: "completed", startedAt: 1000, completedAt: 2000 });
+		state.markProgress(9000);
+
+		state.resetForResume(5000);
+
+		expect(state.lastProgressAt).toBe(5000);
 	});
 });

@@ -1,8 +1,9 @@
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { Mock } from "vitest";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createAvailabilityState } from "#src/lib/availability";
 import type { Exec } from "#src/lib/exec";
-import { executeColGrepSearch } from "#src/tools/colgrep";
+import { executeColGrepSearch, registerColGrep } from "#src/tools/colgrep";
 
 // ---- mock node builtins ----
 
@@ -214,5 +215,85 @@ describe("executeColGrepSearch", () => {
       );
       expect(mockWriteFile).not.toHaveBeenCalled();
     });
+  });
+});
+
+// ---- renderResult ----
+
+interface RenderableTool {
+  renderResult: (
+    result: unknown,
+    options: { expanded: boolean; isPartial: boolean },
+    theme: unknown,
+    context: { isError: boolean; lastComponent: unknown },
+  ) => unknown;
+}
+
+function captureTool(): RenderableTool {
+  const registerTool = vi.fn();
+  const availability = createAvailabilityState();
+  registerColGrep({ registerTool } as unknown as ExtensionAPI, {
+    exec: vi.fn<Exec>(),
+    availability,
+  });
+  return registerTool.mock.calls[0][0] as RenderableTool;
+}
+
+const stubTheme = {
+  fg: (color: string, text: string) => `<${color}>${text}`,
+};
+
+function render(
+  result: unknown,
+  options: { expanded: boolean },
+  isError: boolean,
+): string {
+  const setText = vi.fn<(text: string) => void>();
+  captureTool().renderResult(
+    result,
+    { ...options, isPartial: false },
+    stubTheme,
+    { isError, lastComponent: { setText } },
+  );
+  return setText.mock.calls[0][0];
+}
+
+describe("renderResult", () => {
+  const errorResult = {
+    content: [
+      {
+        type: "text",
+        text: "colgrep is not installed or not available.\nInstall it from: https://example.test",
+      },
+    ],
+    details: undefined,
+  };
+
+  it("renders a collapsed error as ✗ with the error's first line", () => {
+    const text = render(errorResult, { expanded: false }, true);
+    expect(text).toContain("<error>✗");
+    expect(text).toContain("colgrep is not installed or not available.");
+    expect(text).not.toContain("Install it from");
+    expect(text).not.toContain("<success>✓");
+  });
+
+  it("renders a collapsed success as ✓ with the hit count", () => {
+    const text = render(
+      {
+        content: [{ type: "text", text: "a.ts:1\nb.ts:2" }],
+        details: { hitCount: 2, truncated: false },
+      },
+      { expanded: false },
+      false,
+    );
+    expect(text).toContain("<success>✓");
+    expect(text).toContain("2 hits");
+    expect(text).not.toContain("<error>");
+  });
+
+  it("renders an expanded error as the full error text", () => {
+    const text = render(errorResult, { expanded: true }, true);
+    expect(text).toContain("colgrep is not installed or not available.");
+    expect(text).toContain("Install it from: https://example.test");
   });
 });

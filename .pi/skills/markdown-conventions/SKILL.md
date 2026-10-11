@@ -31,6 +31,9 @@ The `pi-autoformat` extension reformats every file an `Edit`/`Write` touches, an
 - It likewise joins a sentence onto the previous line when the sentence opens with a lowercase token (a package or command name such as `git-cliff`) — lead with a capital instead.
 - It also reads a numbered section citation (`§ *7. Verify CI*`) as a sentence end and splits it — cite the heading instead (`` the `## 7. Verify CI` section ``).
 - It also reads a leading `~` as strikethrough and rewrites a `~`-prefixed token (`(~:211)` → `(~~211)`), which `rumdl check` passes — write an approximate line reference as `line ~211`.
+- It also trims a space at the edge of a code span (`rumdl`'s MD038 fix), so a space-prefixed wildcard lands as `*`; when the space is the meaning, say it in prose ("a space and `*`").
+
+Damage this pass writes lands in the file's first commit, so git holds no clean copy; recover the authored text from the `Write` `content` / `Edit` `newText` arguments in the session transcripts under `~/.pi/agent/sessions/`.
 
 ### Non-ASCII in authored prose
 
@@ -48,13 +51,16 @@ A form feed it will not repair for you: deleting the byte alone strands the `ere
 Write the character itself in an `Edit`/`Write` body, never a `\uXXXX` token — the addendum's literal-character rule governs `newText` as much as `oldText`.
 That governs *matching* as much as writing: a rejected `oldText` on a line holding an em-dash is usually a token you emitted wrong, not a file that moved.
 On #966 ten batches failed because U+2014 left the model as a tab plus `a`, as a bare newline, or as the literal escape, while a spike matched and wrote a real em-dash in every trial — so re-emit the character before changing tactics.
-Only when it genuinely will not emit, write a placeholder and substitute it in a scripted pass — `@PH@`, then `s.replace('@PH@', '\u2014')`.
+Only when it genuinely will not emit, or when one `Edit`/`Write` must carry more than a handful (a roadmap's em-dash bullets and `→` tracks), write an ASCII placeholder and substitute it in a scripted pass: `@@MD@@`, then `s.replace('@@MD@@', '\u2014')`.
+One 45-character insertion arrived with every em-dash as a stray `cb` line and every `→`/`≥` as a blank line, a shape no lint script detects.
 The escape there belongs to the substituting script; hand-written in an edit body it arrives over-escaped (`\\u2014`) and lands in the file as literal text (Refs #960).
 
 That literal form is gated in markdown.
 Outside code spans and fenced blocks, the pre-commit hook and `pi-autoformat` decode a `\u2014` or `\u{1F600}` escape to its character, and `pnpm run lint` rejects any left behind, along with a bare `u2014` whose backslash was lost; run `node scripts/lint/unicode-escapes.mjs [--fix]` on demand (Refs #967).
 A bare token, or an escape for an invisible character, it reports for a hand repair.
 To quote an escape on purpose, put it in backticks; in bare prose, write `\\u2014`, which CommonMark renders as the literal and the gate leaves alone.
+The same gate covers the comments of `.ts`/`.js`/`.mjs` files, where a string literal stays exempt and a backtick quote is the escape hatch too.
+That hatch also hides a glyph you emitted wrong: an ellipsis or em-dash inside backticks (`time ( … )`) that arrives as an escape passes every gate, so after writing one in a code span, run `rg -n '\\u20[0-9a-f]{2}' <file>`.
 The split-sentence form stays a manual scan: `rumdl`'s sentence-per-line reflow rejoins the split before any gate runs, so what survives is a missing word no pattern can see.
 
 ### Code fences
@@ -80,7 +86,6 @@ An insertion point that reads correctly at the seam can reparent what follows it
 
 ### Issue references
 
-- When an issue number would begin a line outside a fenced code block, prefix it with `Issue` (e.g. `Issue #42`) to prevent `#N` from being misread as a Markdown heading.
 - In long-lived docs (`docs/architecture/`, `docs/plans/`), reference GitHub issues with reference-style links — `[#42]` in the body, `[#42]: https://github.com/gotgenes/pi-packages/issues/42` at the end of the file.
   Bare `#42` auto-links on GitHub but not in other renderers.
   Every `[#N]:` definition must have a matching `[#N]` reference in the body (markdownlint MD053 rejects unused definitions).
@@ -91,6 +96,10 @@ An insertion point that reads correctly at the seam can reparent what follows it
   Link reference definitions are file-scoped: when appending a stage entry to a retro that already defines `[#N]:`, reference it without re-adding the definition — a duplicate trips MD053.
 - ADR numbering is per-package, but `[ADR-NNNN]` reference-link definitions are file-scoped and may already point to another package's ADR (e.g. pi-subagents' `[ADR-0002]`).
   When citing this package's own ADR in such a doc, reference it by path (`docs/decisions/NNNN-<slug>.md`), not a bare `ADR-NNNN` token.
+
+### Version numbers
+
+Never name an unreleased version in docs, nor write a plan step that does — `next-version.sh` prints a prediction that moves with every commit; name the condition instead ("the major after 36.x").
 
 ## Documentation frontmatter
 

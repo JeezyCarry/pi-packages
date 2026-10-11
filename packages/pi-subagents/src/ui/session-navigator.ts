@@ -19,21 +19,32 @@
  * and the widget. It consumes a `TranscriptSource`, so a released agent's disk
  * snapshot (`fileSnapshotSource`) swaps in without touching the renderer or the pane.
  *
- * It mounts through `ui.custom`'s non-overlay path deliberately: Pi's regular-mode
- * renderer composites overlays into the buffer that backs scrollback, so an overlay
- * mount bakes this pane's chrome into terminal history. See
- * `docs/decisions/0007-transcript-viewer-is-not-an-overlay.md`.
+ * In regular mode it mounts through `ui.custom`'s non-overlay path deliberately:
+ * Pi's regular-mode renderer composites overlays into the buffer that backs
+ * scrollback, so an overlay mount bakes this pane's chrome into terminal history
+ * (`docs/decisions/0007-transcript-viewer-is-not-an-overlay.md`). In fullscreen
+ * mode it floats as an overlay over the bottom of the screen, because Pi's
+ * fullscreen viewport claims PgUp/PgDn/Home/End before any docked component and
+ * defers them only to a focused overlay
+ * (`docs/decisions/0012-fullscreen-viewer-is-an-overlay.md`).
  */
 
 import { getMarkdownTheme } from "@earendil-works/pi-coding-agent";
 import {
   type Component,
+  type Keybinding,
+  type KeyId,
   type MarkdownTheme,
   matchesKey,
+  type OverlayOptions,
   type TUI,
+  type TuiMode,
+  type TuiMouseEvent,
+  type TuiMouseEventResult,
   truncateToWidth,
 } from "@earendil-works/pi-tui";
 import type { AgentConfigLookup } from "#src/config/agent-types";
+import { readPersistedRuns, type SessionEntryLike } from "#src/persisted-record";
 import { formatModel, type ModelIdentity, type Theme } from "#src/ui/display";
 import { labeledRule } from "#src/ui/labeled-rule";
 import {
@@ -48,10 +59,28 @@ import { TranscriptContent } from "#src/ui/transcript-content";
 
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** Chrome lines: the header rule and the footer rule. The pane is docked, so it needs no frame. */
+/** Chrome lines: the header rule and the footer rule. The pane sits on Pi's own chrome, so it needs no frame. */
 const CHROME_LINES = 2;
 const MIN_VIEWPORT = 3;
 const VIEWPORT_HEIGHT_PCT = 70;
+
+/**
+ * Rows Pi's default footer takes: the cwd and stats rows. An extension status
+ * adds a third, which the pane covers while open; reserving it instead would
+ * expose the editor's bottom border whenever no status is set.
+ */
+const PI_FOOTER_ROWS = 2;
+
+/** Where the fullscreen pane floats: the region the docked pane fills in regular mode, above Pi's footer. */
+const FULLSCREEN_OVERLAY: OverlayOptions = {
+  anchor: "bottom-center",
+  width: "100%",
+  maxHeight: `${VIEWPORT_HEIGHT_PCT}%`,
+  margin: { bottom: PI_FOOTER_ROWS },
+};
+
+/** What the mode probe mounts: nothing, since it closes before Pi would mount it. */
+const NOTHING: Component = { render: () => [], invalidate: () => {} };
 
 /**
  * The pane's theme: the shared narrow `Theme` plus the one method only the pane
@@ -63,11 +92,20 @@ export type TranscriptTheme = Theme & {
   getThinkingBorderColor(level: string): (text: string) => string;
 };
 
+/**
+ * The `KeybindingsManager` surface the pane reads. Pi passes its manager to
+ * every `ui.custom` factory, so the pane honours the operator's remaps.
+ */
+export interface PaneKeys {
+  matches(data: string, keybinding: Keybinding): boolean;
+  getKeys(keybinding: Keybinding): KeyId[];
+}
+
 /** Component factory shape Pi's `ui.custom` invokes to mount a component. */
 export type CustomComponentFactory<R> = (
   tui: TUI,
   theme: TranscriptTheme,
-  keybindings: unknown,
+  keybindings: PaneKeys,
   done: (result: R) => void,
 ) => Component;
 
@@ -75,7 +113,13 @@ export type CustomComponentFactory<R> = (
 export interface SessionNavigatorUI {
   select(title: string, options: string[]): Promise<string | undefined>;
   notify(message: string, level: "info" | "warning" | "error"): void;
-  custom<R>(component: CustomComponentFactory<R>, options?: unknown): Promise<R>;
+  custom<R>(component: CustomComponentFactory<R>, options?: ViewerMountOptions): Promise<R>;
+}
+
+/** How `ui.custom` mounts a component: Pi's options, narrowed to what the navigator sets. */
+export interface ViewerMountOptions {
+  overlay: boolean;
+  overlayOptions?: OverlayOptions;
 }
 
 /** Parameters for one `/subagents:sessions` invocation. */
@@ -87,12 +131,21 @@ export interface SessionNavigatorParams {
   cwd: string;
   /** Reads a persisted session file for the file-snapshot source. */
   readFile: (path: string) => string;
+  /** The parent session's entries, whose run records outlive the manager's. */
+  sessionEntries: readonly SessionEntryLike[];
+}
+
+/** How a scroll move treats following new output; by default it follows when it lands on the bottom. */
+interface ScrollOptions {
+  follow?: boolean;
 }
 
 /** Options for the read-only transcript pane. */
 export interface TranscriptPaneOptions {
   tui: TUI;
   theme: TranscriptTheme;
+  /** Paging and top/bottom follow Pi's viewport bindings (`tui.altScreen.*`). */
+  keys: PaneKeys;
   source: TranscriptSource;
   /** Who produced the transcript, named in the header rule. */
   heading: EntryHeading;
@@ -107,10 +160,12 @@ export interface TranscriptPaneOptions {
  * Lists navigable subagents, lets the operator pick one, and opens its transcript
  * read-only. Receives the agent snapshot (`manager.listAgents()`) rather than the
  * manager, so it stays a reactive consumer with no inbound call into the core.
+ * The session's entries add the runs it recorded that the manager no longer
+ * holds, such as those from before a `/reload`.
  */
 export class SessionNavigatorHandler {
-  async handle({ ui, agents, registry, cwd, readFile }: SessionNavigatorParams): Promise<void> {
-    const entries = listNavigableAgents(agents, registry);
+  async handle({ ui, agents, registry, cwd, readFile, sessionEntries }: SessionNavigatorParams): Promise<void> {
+    const entries = listNavigableAgents(agents, registry, readPersistedRuns(sessionEntries));
     if (entries.length === 0) {
       ui.notify("No subagent sessions to view.", "info");
       return;
@@ -131,12 +186,33 @@ export class SessionNavigatorHandler {
       return;
     }
     const markdownTheme = getMarkdownTheme();
+    const mode = await probeTuiMode(ui);
     await ui.custom<undefined>(
-      (tui, theme, _keybindings, done) =>
-        new TranscriptPane({ tui, theme, source, heading: entry.heading, done, cwd, markdownTheme }),
-      { overlay: false },
+      (tui, theme, keys, done) =>
+        new TranscriptPane({ tui, theme, keys, source, heading: entry.heading, done, cwd, markdownTheme }),
+      viewerMountOptions(mode),
     );
   }
+}
+
+/**
+ * The TUI's render mode, read before the pane mounts. Pi decides overlay versus
+ * docked before it runs a `ui.custom` factory and exposes no mode accessor, so
+ * this mounts a factory that closes with `tui.mode` before returning; Pi then
+ * never mounts what it returns. A UI that runs no factory (print or RPC mode)
+ * resolves `undefined`, which keeps the docked default.
+ */
+async function probeTuiMode(ui: SessionNavigatorUI): Promise<TuiMode> {
+  const mode = await ui.custom<TuiMode | undefined>((tui, _theme, _keys, done) => {
+    done(tui.mode);
+    return NOTHING;
+  });
+  return mode === "fullscreen" ? "fullscreen" : "regular";
+}
+
+/** Docked in regular mode (ADR 0007); a focused overlay in fullscreen mode, so the viewport keys reach it (ADR 0012). */
+function viewerMountOptions(mode: TuiMode): ViewerMountOptions {
+  return mode === "fullscreen" ? { overlay: true, overlayOptions: FULLSCREEN_OVERLAY } : { overlay: false };
 }
 
 /**
@@ -154,6 +230,7 @@ export class TranscriptPane implements Component {
 
   private readonly tui: TUI;
   private readonly theme: TranscriptTheme;
+  private readonly keys: PaneKeys;
   private readonly source: TranscriptSource;
   private readonly heading: EntryHeading;
   private readonly done: (result: undefined) => void;
@@ -161,9 +238,10 @@ export class TranscriptPane implements Component {
   /** Width the host last rendered at; input must use the same layout. */
   private renderedWidth: number | undefined;
 
-  constructor({ tui, theme, source, heading, done, cwd, markdownTheme }: TranscriptPaneOptions) {
+  constructor({ tui, theme, keys, source, heading, done, cwd, markdownTheme }: TranscriptPaneOptions) {
     this.tui = tui;
     this.theme = theme;
+    this.keys = keys;
     this.source = source;
     this.heading = heading;
     this.done = done;
@@ -182,27 +260,28 @@ export class TranscriptPane implements Component {
       return;
     }
 
-    const { viewportHeight, maxScroll } = this.scrollBounds(this.inputWidth());
+    const { viewportHeight } = this.scrollBounds(this.inputWidth());
 
     if (matchesKey(data, "up") || matchesKey(data, "k")) {
-      this.scrollOffset = Math.max(0, this.scrollOffset - 1);
-      this.autoScroll = this.scrollOffset >= maxScroll;
+      this.scrollBy(-1);
     } else if (matchesKey(data, "down") || matchesKey(data, "j")) {
-      this.scrollOffset = Math.min(maxScroll, this.scrollOffset + 1);
-      this.autoScroll = this.scrollOffset >= maxScroll;
-    } else if (matchesKey(data, "pageUp") || matchesKey(data, "shift+up")) {
-      this.scrollOffset = Math.max(0, this.scrollOffset - viewportHeight);
-      this.autoScroll = false;
-    } else if (matchesKey(data, "pageDown") || matchesKey(data, "shift+down")) {
-      this.scrollOffset = Math.min(maxScroll, this.scrollOffset + viewportHeight);
-      this.autoScroll = this.scrollOffset >= maxScroll;
-    } else if (matchesKey(data, "home")) {
-      this.scrollOffset = 0;
-      this.autoScroll = false;
-    } else if (matchesKey(data, "end")) {
-      this.scrollOffset = maxScroll;
-      this.autoScroll = true;
+      this.scrollBy(1);
+    } else if (this.keys.matches(data, "tui.altScreen.pageUp") || matchesKey(data, "shift+up")) {
+      this.scrollBy(-viewportHeight, { follow: false });
+    } else if (this.keys.matches(data, "tui.altScreen.pageDown") || matchesKey(data, "shift+down")) {
+      this.scrollBy(viewportHeight);
+    } else if (this.keys.matches(data, "tui.altScreen.top")) {
+      this.scrollTo(0, { follow: false });
+    } else if (this.keys.matches(data, "tui.altScreen.bottom")) {
+      this.scrollTo(Number.POSITIVE_INFINITY);
     }
+  }
+
+  /** The wheel scrolls the transcript; every other mouse event is left to the host. */
+  handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
+    if (event.type !== "wheel") return undefined;
+    this.scrollBy(event.wheelDelta ?? 0);
+    return { handled: true };
   }
 
   render(width: number): string[] {
@@ -229,7 +308,7 @@ export class TranscriptPane implements Component {
         ? "100%"
         : `${Math.round(((visibleStart + viewportHeight) / totalLines) * 100)}%`;
     const position = th.fg("dim", `${totalLines} lines · ${scrollPct}`);
-    const hints = th.fg("dim", "↑↓ scroll · PgUp/PgDn · Esc close");
+    const hints = th.fg("dim", this.footerHint());
     lines.push(labeledRule(width, paint, [position], [hints]));
 
     return lines;
@@ -251,6 +330,25 @@ export class TranscriptPane implements Component {
   // ---- Private ----
 
   /**
+   * The key hints the footer rule carries on its right, naming the keys the
+   * operator actually bound: the first key of each binding, and no segment
+   * for a pair left wholly unbound.
+   */
+  private footerHint(): string {
+    const page = this.keyPair("tui.altScreen.pageUp", "tui.altScreen.pageDown");
+    const ends = this.keyPair("tui.altScreen.top", "tui.altScreen.bottom");
+    return ["↑↓ scroll", page, ends, "Esc close"].filter((segment) => segment !== "").join(" · ");
+  }
+
+  /** `PageUp/PageDown` for a pair of bindings; the bound side alone when the other is unbound. */
+  private keyPair(first: Keybinding, second: Keybinding): string {
+    return [first, second]
+      .flatMap((keybinding) => this.keys.getKeys(keybinding).slice(0, 1))
+      .map(displayKey)
+      .join("/");
+  }
+
+  /**
    * Header labels, most to least informative: the rule drops the task first,
    * then the model and thinking level, before it truncates the agent's name.
    */
@@ -261,6 +359,21 @@ export class TranscriptPane implements Component {
     const runtime = describeRuntime(model, thinkingLevel);
     const runtimeTag = runtime ? th.fg("muted", ` · ${runtime}`) : "";
     return [`${identity}  ${th.fg("muted", description)}${runtimeTag}`, identity + runtimeTag, identity];
+  }
+
+  private scrollBy(delta: number, options?: ScrollOptions): void {
+    this.scrollTo(this.scrollOffset + delta, options);
+  }
+
+  /**
+   * Move to `offset`, clamped to the transcript. The pane follows new output
+   * when it lands on the bottom, unless the move says otherwise: paging up or
+   * jumping to the top stops following even on a transcript that fits.
+   */
+  private scrollTo(offset: number, { follow }: ScrollOptions = {}): void {
+    const { maxScroll } = this.scrollBounds(this.inputWidth());
+    this.scrollOffset = Math.min(maxScroll, Math.max(0, offset));
+    this.autoScroll = follow ?? this.scrollOffset >= maxScroll;
   }
 
   /**
@@ -293,6 +406,14 @@ export class TranscriptPane implements Component {
     const cap = Math.floor((this.tui.terminal.rows * VIEWPORT_HEIGHT_PCT) / 100) - CHROME_LINES;
     return Math.max(MIN_VIEWPORT, Math.min(totalLines, cap));
   }
+}
+
+/** A key id in Pi's display style: `ctrl+b` → `Ctrl+B`, `pageUp` → `PageUp`. */
+function displayKey(key: KeyId): string {
+  return key
+    .split("+")
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join("+");
 }
 
 /**

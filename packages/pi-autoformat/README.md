@@ -115,7 +115,8 @@ By default, `pi-autoformat` reports concise success summaries and per-batch fail
 In the interactive TUI, success renders as a persistent one-line footer status (e.g. `✓ autoformat: 3 files (biome, prettier)`).
 Failures fire a warning notification and leave an error-styled footer status (e.g. `✗ autoformat: 1 batch failed (prettier)`) that persists until the next flush.
 
-Outside the TUI, summaries are written as prefixed log lines on `stdout` / `stderr`.
+Outside a UI (print mode, or an in-process subagent session), success is silent.
+Failures and configuration issues are written as prefixed warnings on `stderr`.
 
 Set `hideSummariesInTui` to `true` to suppress the success status line.
 To surface failed-run stderr (or stdout+stderr), see [`formatterOutput`](docs/configuration.md#formatteroutput).

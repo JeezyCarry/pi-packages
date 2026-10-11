@@ -1,5 +1,6 @@
 import type { SubagentManagerObserver } from "#src/lifecycle/subagent-manager";
 import { buildEventData, type NotificationSystem } from "#src/observation/notification";
+import { SUBAGENT_RECORD_ENTRY, toPersistedRecord } from "#src/persisted-record";
 import type { CompactionInfo, Subagent } from "#src/types";
 
 /** Emit callback — a subset of `pi.events.emit`. */
@@ -70,8 +71,8 @@ export class SubagentEventsObserver implements SubagentManagerObserver {
 	}
 
 	onSubagentResumed(record: Subagent): void {
-		// A resumed run terminates only as completed or error; a single distinct
-		// channel carries both — the payload's status/error discriminate. Existing
+		// A resumed run terminates in any terminal status; a single distinct
+		// channel carries them all — the payload's status/error discriminate. Existing
 		// subagents:completed/failed subscribers keep their once-per-run semantics.
 		this.emit("subagents:resumed", buildEventData(record));
 		this.persistAndNotify(record);
@@ -86,16 +87,7 @@ export class SubagentEventsObserver implements SubagentManagerObserver {
 	 * not owned here.
 	 */
 	private persistAndNotify(record: Subagent): void {
-		this.appendEntry("subagents:record", {
-			id: record.id,
-			type: record.type,
-			description: record.description,
-			status: record.status,
-			result: record.result,
-			error: record.error,
-			startedAt: record.startedAt,
-			completedAt: record.completedAt,
-		});
+		this.appendEntry(SUBAGENT_RECORD_ENTRY, toPersistedRecord(record));
 		this.notifications.sendCompletion(record);
 	}
 

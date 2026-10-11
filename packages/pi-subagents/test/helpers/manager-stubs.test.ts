@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { createBlockingFactory, createSessionFactory } from "./manager-stubs";
 import { createMockSession } from "./mock-session";
+import { turnLoopResult } from "./turn-loop-result";
 
 describe("createBlockingFactory", () => {
 	it("returns a pending promise (never resolves)", () => {
@@ -35,11 +36,7 @@ describe("createSessionFactory", () => {
 
 	it("runTurnLoop resolves to a done TurnLoopResult by default", async () => {
 		const { stub } = createSessionFactory();
-		await expect(stub.runTurnLoop("go", {})).resolves.toEqual({
-			responseText: "done",
-			aborted: false,
-			steered: false,
-		});
+		await expect(stub.runTurnLoop("go", {})).resolves.toEqual(turnLoopResult());
 	});
 
 	it("the factory is a vi.fn stub", () => {

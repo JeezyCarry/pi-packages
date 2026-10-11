@@ -9,8 +9,8 @@
  * asserts the renderer's own full-redraw counter never moves.
  */
 
-import { type Terminal, TuiMainScreen } from "@earendil-works/pi-tui";
-import { describe, expect, it } from "vitest";
+import { type Terminal, TuiAltScreen, TuiMainScreen } from "@earendil-works/pi-tui";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AgentTypeRegistry } from "#src/config/agent-types";
 import type { SubagentManager } from "#src/lifecycle/subagent-manager";
 import { AgentWidget, type UICtx } from "#src/ui/agent-widget";
@@ -145,5 +145,56 @@ describe("AgentWidget under Pi's regular-mode renderer", () => {
 
 		expect(short.widgetLines).toBe(6);
 		expect(tall.widgetLines).toBe(12);
+	});
+});
+
+describe("AgentWidget cadence under Pi's real renderers", () => {
+	beforeEach(() => {
+		vi.useFakeTimers();
+	});
+
+	afterEach(() => {
+		vi.useRealTimers();
+	});
+
+	/** Milliseconds until the widget first asks this renderer for a frame. */
+	function firstTickAfter(tui: TuiAltScreen | TuiMainScreen): number {
+		const record = createTestSubagent({
+			id: "a1",
+			status: "running",
+			completedAt: undefined,
+			isBackground: true,
+		});
+		const manager = { listAgents: () => [record] } as unknown as SubagentManager;
+		const widget = new AgentWidget(manager, new AgentTypeRegistry(() => new Map()));
+		const theme = { fg: (_: string, text: string) => text, bold: (text: string) => text };
+		const requestRender = vi.spyOn(tui, "requestRender").mockImplementation(() => {});
+		widget.setUICtx({
+			setStatus: () => {},
+			setWidget: (_key, content) => {
+				content?.(tui, theme);
+			},
+		});
+
+		widget.onSubagentStarted(record);
+		let elapsed = 0;
+		while (requestRender.mock.calls.length === 0 && elapsed < 1000) {
+			vi.advanceTimersByTime(1);
+			elapsed++;
+		}
+		widget.dispose();
+		return elapsed;
+	}
+
+	it("ticks every 80 ms under the fullscreen renderer", () => {
+		const tui = new TuiAltScreen(fakeTerminal(100, 40), false, "/tmp/pi-subagents-widget-viewport-test");
+
+		expect(firstTickAfter(tui)).toBe(80);
+	});
+
+	it("ticks every 250 ms under the regular renderer", () => {
+		const tui = new TuiMainScreen(fakeTerminal(100, 40), false, "/tmp/pi-subagents-widget-viewport-test");
+
+		expect(firstTickAfter(tui)).toBe(250);
 	});
 });

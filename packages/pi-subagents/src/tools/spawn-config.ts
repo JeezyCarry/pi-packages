@@ -10,7 +10,7 @@ import type { Model } from "@earendil-works/pi-ai";
 import type { AgentTypeRegistry } from "#src/config/agent-types";
 import { type LockableField, resolveAgentInvocationConfig } from "#src/config/invocation-config";
 import { parseThinkingLevel, thinkingLevelError } from "#src/config/thinking-level";
-import { normalizeMaxTurns } from "#src/lifecycle/turn-limits";
+import { isBelowMinimumTurns, MIN_MAX_TURNS, normalizeMaxTurns } from "#src/lifecycle/turn-limits";
 import type { ModelRegistry } from "#src/session/model-resolver";
 import { resolveInvocationModel } from "#src/session/model-resolver";
 import type { AgentInvocation, SubagentType, ThinkingLevel } from "#src/types";
@@ -149,6 +149,7 @@ export function resolveSpawnConfig(
     notes: [
       ...buildFallbackNote(rawType, fellBack),
       ...buildLockNote(subagentType, resolvedConfig.discarded),
+      ...buildMinimumTurnsNote(resolvedConfig.maxTurns),
     ],
     execution: {
       prompt: params.prompt as string,
@@ -167,6 +168,19 @@ export function resolveSpawnConfig(
 /** Advise that the named type does not exist, so general-purpose ran instead. */
 export function buildFallbackNote(rawType: SubagentType, fellBack: boolean): string[] {
   return fellBack ? [`Note: Unknown agent type "${rawType}" — using general-purpose.`] : [];
+}
+
+/**
+ * Advise that the resolved max_turns was raised to the minimum.
+ *
+ * The value came from this call or from the agent file, and either way the caller
+ * would otherwise read a budget it never got.
+ */
+function buildMinimumTurnsNote(maxTurns: number | undefined): string[] {
+  if (!isBelowMinimumTurns(maxTurns)) return [];
+  return [
+    `Note: max_turns ${maxTurns} is below the minimum of ${MIN_MAX_TURNS} (one turn to work, one to answer), so the subagent runs with ${MIN_MAX_TURNS}.`,
+  ];
 }
 
 /**

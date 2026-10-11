@@ -7,7 +7,10 @@
  * `permissionManager.check`; session state overrides are applied
  * via vi.spyOn on the real session instance.
  */
-import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type {
+  ExtensionContext,
+  NormalizedBuildSystemPromptOptions,
+} from "@earendil-works/pi-coding-agent";
 import { vi } from "vitest";
 import type { ResolvedAccessIntent } from "#src/access-intent/access-intent";
 import { surfaceFamilyOf } from "#src/access-intent/path-surfaces";
@@ -71,6 +74,28 @@ export function makeEvents() {
   };
 }
 
+/**
+ * A `before_agent_start` event's `systemPromptOptions`, collection-complete
+ * the way Pi's runner normalizes it, so a handler that mutates `sections` or
+ * `skills` finds them present. Each call returns a fresh object.
+ */
+export function makePromptOptions(
+  overrides: Partial<NormalizedBuildSystemPromptOptions> = {},
+): NormalizedBuildSystemPromptOptions {
+  return {
+    cwd: "/test/project",
+    selectedTools: [],
+    toolSnippets: {},
+    toolGuidelines: {},
+    promptGuidelines: [],
+    appendSystemPrompt: "",
+    sections: {},
+    contextFiles: [],
+    skills: [],
+    ...overrides,
+  };
+}
+
 export function makeCtx(
   overrides: Partial<ExtensionContext> = {},
 ): ExtensionContext {
@@ -103,6 +128,16 @@ export function makeCtx(
  */
 export function makeConfigIssueReporter() {
   return { report: vi.fn<() => void>() };
+}
+
+/**
+ * A `PolicyIssueReporting` double for the session-start and agent-prep
+ * handlers, which each hand it the agent name they resolved.
+ *
+ * Unannotated return type so callers keep full `vi.fn()` access on `report`.
+ */
+export function makePolicyIssueReporter() {
+  return { report: vi.fn<(agentName: string | undefined) => void>() };
 }
 
 export function makeToolCallEvent(
@@ -274,7 +309,7 @@ export function makeBashCommandCheck(opts: {
  *
  * The `session` override bag maps to the real collaborators:
  * - `checkPermission` → applied to `permissionManager.checkPermission`
- * - `getActiveSkillEntries`, `getInfrastructureReadDirs`, `getToolPreviewLimits`
+ * - `getActiveSkillEntries`, `getInfrastructureReadScope`, `getToolPreviewLimits`
  *   → applied as vi.spyOn overrides on the real session
  * - `resolveAgentName` → applied as a vi.spyOn override on the real session
  *
@@ -323,20 +358,31 @@ export function makeHandler(overrides?: {
     // paths via the single manager entry point (#478).
     vi.mocked(permissionManager.check).mockImplementation(
       (intent: ResolvedAccessIntent, sessionRules) => {
-        if (intent.kind === "path-values") {
-          return surfaceCheck(
-            intent.surface,
-            { path: intent.values[0] ?? "*" },
-            intent.agentName,
-            sessionRules,
-          );
+        switch (intent.kind) {
+          case "path-values":
+            return surfaceCheck(
+              intent.surface,
+              { path: intent.values[0] ?? "*" },
+              intent.agentName,
+              sessionRules,
+            );
+          case "tool":
+            return surfaceCheck(
+              intent.surface,
+              intent.input,
+              intent.agentName,
+              sessionRules,
+            );
+          case "bash-command":
+            return surfaceCheck(
+              "bash",
+              { command: intent.command },
+              intent.agentName,
+              sessionRules,
+            );
+          default:
+            return unhandledIntent(intent);
         }
-        return surfaceCheck(
-          intent.surface,
-          intent.input,
-          intent.agentName,
-          sessionRules,
-        );
       },
     );
   }
@@ -345,9 +391,9 @@ export function makeHandler(overrides?: {
       so.getActiveSkillEntries,
     );
   }
-  if (so?.getInfrastructureReadDirs) {
-    vi.spyOn(session, "getInfrastructureReadDirs").mockImplementation(
-      so.getInfrastructureReadDirs,
+  if (so?.getInfrastructureReadScope) {
+    vi.spyOn(session, "getInfrastructureReadScope").mockImplementation(
+      so.getInfrastructureReadScope,
     );
   }
   if (so?.getToolPreviewLimits) {
@@ -407,6 +453,11 @@ export function makeHandler(overrides?: {
     permissionManager,
     forwarding,
   };
+}
+
+/** Fails the type check when the manager gains an intent kind the adapter does not map. */
+function unhandledIntent(intent: never): never {
+  throw new Error(`unhandled intent: ${JSON.stringify(intent)}`);
 }
 
 // ── Decision-event helper ─────────────────────────────────────────────────

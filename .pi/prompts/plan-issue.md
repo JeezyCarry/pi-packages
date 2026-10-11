@@ -111,7 +111,7 @@ When the issue proposes a new aggregate, report, or roll-up for human/agent cons
 Classify whether the change is breaking — independently of whether it is ambiguous.
 A change is breaking if it alters the observable behavior, output shape, or default of existing code or config on upgrade without a user edit.
 A bug fix that changes a default value is breaking, even when the old behavior was wrong.
-If breaking, state it in Goals and use `feat!:`/`fix!:` with a `BREAKING CHANGE:` footer.
+If breaking, state it in Goals and use `fix(<pkg>)!:`/`feat(<pkg>)!:` (the `!` after the scope) with a `BREAKING CHANGE:` footer.
 When the change alters a documented contract (an event's timing guarantee, a default, an output shape), state the classification in the gate's substance message even when an ADR already settled it.
 A settled call and an unasked one look identical to the operator.
 
@@ -181,11 +181,13 @@ Then an H1 title (e.g., `# <short descriptive title>`) — required by markdownl
 - **Background** — relevant existing modules/functions and how they relate.
   Flag any constraint from AGENTS.md that applies.
 - **Design Overview** — decision model, data shapes, separation of concerns, edge cases.
+  An edge case the Design Overview states as behavior (not as out of scope) gets a test in some TDD step — name the step.
   Include code-fenced TS types when shape changes.
   When the design introduces a new collaborator that multiple consumers will use, sketch the consumer's call site (3–5 lines of pseudocode) to verify the interaction pattern follows Tell-Don't-Ask and Law of Demeter.
   When the design extracts code into a new module, sketch the extracted module's interaction with its upstream dependencies (3–5 lines) to verify it doesn't carry Tell-Don't-Ask violations, output-argument mutations, or reverse-search patterns from the original code.
   Fix upstream API gaps in the plan before planning the extraction.
   When a step adds an import edge A → B within one directory, confirm B does not already reach A through its own imports — `fallow guard` allows every same-zone edge, so the cycle surfaces only as a `fallow dead-code` failure mid-TDD.
+  When a step adds an import edge A → B across directories, run `pnpm --silent fallow guard <A>` at planning time — a forbidden zone reshapes the design, and found mid-TDD it forces a deviation.
   When a new exported function accepts domain objects, verify the parameter type follows ISP — list which fields the function reads and confirm the type doesn't carry unused fields.
   When the plan consolidates code from multiple methods into a shared helper, verify the methods have the same lifecycle semantics — different guards, cleanup scopes, or shutdown-vs-normal-operation contexts indicate structural duplication that should not be extracted.
   When the design has N sibling call sites each supply the same derived fact, check whether a shared downstream point already stamps per-call fields (a runner, a writer, a factory) — a fact every sibling merely relays belongs there, not in N places.
@@ -235,6 +237,7 @@ Then an H1 title (e.g., `# <short descriptive title>`) — required by markdownl
   Name the constituency each invariant serves and confirm it still holds for them — an invariant can be dead for one consumer and load-bearing for another, and a design that improves the loudest one regresses the original.
 - **TDD Order** — numbered red→green→verify→commit cycles.
   Each item names the test surface, what's covered, and the suggested commit message (`test:`, `feat:`, `feat!:`, `fix:`, `docs:`).
+  Open each test file a step names — one that mocks the layer under change pins nothing about it.
   A suggested `feat:`/`fix:` subject names the observable outcome, not the seam it edits — it ships to the changelog verbatim.
   Type each step by what a user can observe once it lands (see the `git-workflow` skill): a step that adds a module no consumer references yet is `refactor:`, not `feat:`, so `cliff.toml` skips it and the change reaches the changelog once, on the step that wires it up.
   Each item that adds tests also names its **killing mutation**: the one-line change to the code under test that must turn the step's new tests red.
@@ -285,7 +288,7 @@ git commit -m "docs: plan <short summary> (#$1)"
 Before stopping, persist planning observations for cross-session continuity:
 
 1. Determine the retro file path: same location logic as the plan file (single-package → `packages/<PKG>/docs/retro/NNNN-<slug>.md`; cross-package → `docs/retro/NNNN-<slug>.md`).
-   Use the same slug as the plan file.
+   Use the same slug as the plan file, unless `## Check for prior session context` found an existing retro file for this issue — append to that one.
    Create the directory if needed.
 2. If the retro file does not exist, create it with YAML frontmatter:
 

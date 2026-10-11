@@ -77,3 +77,52 @@ The plan's marker is `**Release:** ship independently`, and the only deferral is
 ### Observations
 
 The pre-completion reviewer's final verdict was WARN with nothing blocking; the residual spellings it listed are in ADR 0009.
+
+## Stage: Final Retrospective (2026-10-01T15:39:25Z)
+
+### Session summary
+
+The root `/ship` fast-forward-merged the peer branch, passed lint, `fallow dead-code`, and CI on e554a37b, closed #995, and released `pi-permission-system-v36.2.1`.
+Across the issue, one peer session ran planning, TDD, and sync (planning and TDD on `claude-opus-5-5`, sync on `claude-sonnet-5-5`), landing 3 refactors, 1 test migration, 5 fixes, and 3 docs commits.
+Both design defects that surfaced after planning were in the plan, not the code: a missed downstream re-expansion and an over-broad detection rule.
+
+### Observations
+
+#### What went well
+
+- Per-step mutation testing in TDD was explicit and productive: each step named its mutations (drop a clause, widen a match, hard-code a lead), applied them with `perl`, and restored from a `/tmp` backup.
+  It found two vacuous tests: the `cat $HOME` rule-candidate row, which projected nothing even unrebound, and a step-7 mutation (c) caught only at the `node-text` level, which led to a program-level `sed -n p ~/x` control.
+- The pre-completion reviewer's differential probe (base against HEAD, 52 constructed inputs through the real `BashProgram.parse`) found a fail-open regression, `grep HOME ~/.bashrc` losing its projection, that 5174 green tests and a 10,226-command log measurement all missed.
+  The reviewer ran on `claude-sonnet-5-5` and was the decisive gate for this issue.
+- The step-5 deviation gate laid out how an unknown variable is handled today on each surface before offering options A and B, and the operator answered it in one exchange.
+
+#### What caused friction (agent side)
+
+- `missing-context` — the plan assumed a rebound reference's literal fallback (`$HOME/x`) would drop out at the shape classifiers like `$X/x`, but `normalizePathPolicyLiteral` → `expandHomePath` re-expands a leading `~`/`$HOME` to the startup home after classification.
+  The package skill already says to trace a repro token through the classifier; planning traced it to the classifier and stopped there.
+  Impact: a mid-TDD design gate (options A/B), one new collaborator method (`spellsReboundHome`, plus `hasHomePrefix` in `expand-home.ts`), and step 7 shrinking to the word half.
+- `premature-convergence` — planning wrote down that over-marking drops projections and is not the safe direction, then accepted the step-6 rule (any argument spelled `HOME`/`PWD` rebinds) because the review log held 0 such arguments.
+  A zero count over the log says nothing about the rule's false positives in shapes the log lacks; `grep HOME ~/.bashrc` was one constructed input away.
+  Impact: a review round 1 WARN, one `fix:` commit narrowing the rule to name-binding builtins, one `docs:` commit, an amended roadmap note, and a delta review round.
+- `other` — the sync stage (`claude-sonnet-5-5`) wrote a literal `\u2014` escape into the retro; self-identified, and `pi-autoformat` had already decoded it.
+  Impact: one wasted tool call.
+- `instruction-violation` (self-identified, at retro) — this ship ran `git pull`, the unpushed-commit count, the ancestry prediction, and the ff-merge in one `bash` call, so the unpushed root commit daae2328 was reported only after the merge instead of before step 4.
+  Impact: none here, since the peer had rebased onto local `main` and the ancestry check passed.
+
+#### What caused friction (user side)
+
+- The operator's mid-step question (why does `find` withdraw its read claim?) showed the step-5 gate assumed the #992 guard vocabulary; the answer is already recorded in the TDD stage note.
+- Nothing else; operator involvement was strategic (option A, narrowing the step-6 rule, residuals over more code).
+
+### Diagnostic details
+
+- **Model-performance correlation** — planning and TDD ran on `claude-opus-5-5`; sync on `claude-sonnet-5-5` (mechanical, appropriate).
+  The `tidy-first-assessor` and both `pre-completion-reviewer` rounds ran on `claude-sonnet-5-5`; the reviewer's judgment-heavy differential probe was its strongest output, so no mismatch.
+  The assessor recommended a raw parameter over a binding object; the operator chose the `WordReader` object instead, and the relay cost it predicted for `token-collection.ts` is the recorded deferred tidying.
+- **Feedback-loop gap analysis** — TDD ran the scoped `vitest` file set after every edit and the full suite plus `check` before every commit; no gap.
+  The gap was upstream of the tests: no constructed false-positive inputs for a detection rule until the reviewer supplied them.
+
+### Changes made
+
+1. `.pi/skills/package-pi-permission-system/SKILL.md`: the repro-tracing rule now traces a token through path normalization as well as the classifier.
+2. `packages/pi-permission-system/docs/architecture/investigating-a-report.md`: the log-mining section now says a rule's zero hits bound nothing about its false positives, and to probe a fail-open rule with constructed benign inputs.

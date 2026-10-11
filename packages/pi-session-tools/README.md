@@ -53,11 +53,15 @@ Parameters:
 - `branches` — which branches of the session's entry tree to render.
   Defaults to `"live"`; any value other than `"all"` is read as `"live"`.
 
-The output is a human-readable transcript: numbered user/assistant turns, one-line tool call summaries with correlated result status, and metadata events (compaction, model changes, session renames).
+The output is a human-readable transcript: numbered user/assistant turns, one-line tool call summaries with correlated result status, and metadata events (compaction, model changes, session renames, context edits, system prompt changes).
 Tool result bodies, thinking content, and image data are omitted.
 A `[model change]` line renders only when the switch actually took effect — a marker followed by an assistant turn before the next switch or the end of entries.
 A phantom switch (e.g. cycling the TUI model picker with no turn run after it) is omitted from both the transcript and the `model changes` count, and does not consume a slot against `limit`.
 A `[session]` line marks each point where the session was renamed, which is how a multi-stage session's stage boundaries stay visible even when user bodies are elided.
+A `[context edit]` line marks where an earlier message was omitted from (or replaced in) the model's context, naming it in transcript terms, as in `[context edit] turn 2 (assistant) omitted from context` or `bash result from turn 2`.
+Turns between the target and the edit still saw the original message.
+When the target falls outside the rendered entries (because of `types`, `offset`, or `limit`), the line names it by entry id instead.
+A `[system]` line marks each system message: the first one in the transcript is the prompt and renders as counts (`[system] prompt: 8 sections, 21 tools`), and later ones name the sections and tools they change.
 
 #### Rewound sessions
 

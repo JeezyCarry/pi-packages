@@ -120,6 +120,18 @@ Custom tools.`);
     expect(result.get("custom-tools")!.toolNames).toEqual(["read", "my_custom_tool", "grep"]);
   });
 
+  it("keeps an MCP tool pattern intact", () => {
+    writeAgent("mcp-tools", `---
+tools: read, mcp__github__*
+---
+
+GitHub tools.`);
+
+    const result = loadCustomAgents(tmpDir);
+    // The child expands the pattern against the parent's tools when it is created.
+    expect(result.get("mcp-tools")!.toolNames).toEqual(["read", "mcp__github__*"]);
+  });
+
   describe("tools field forms", () => {
     it("accepts a YAML block sequence", () => {
       writeAgent("block-seq", `---
@@ -281,6 +293,16 @@ Unlimited turns.`);
 
     const result = loadCustomAgents(tmpDir);
     expect(result.get("unlimited")!.maxTurns).toBe(0);
+  });
+
+  it("keeps a max_turns below the minimum for the turn loop to raise", () => {
+    writeAgent("terse", `---
+max_turns: 1
+---
+
+Terse.`);
+
+    expect(loadCustomAgents(tmpDir).get("terse")!.maxTurns).toBe(1);
   });
 
   it("rejects negative max_turns", () => {

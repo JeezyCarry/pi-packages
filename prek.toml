@@ -9,7 +9,8 @@ repo = "builtin"
 hooks = [
     { id = "trailing-whitespace" },
     { id = "end-of-file-fixer" },
-    { id = "check-added-large-files" },
+    # README media (recorded demos, logos) is the one place a large binary is intended.
+    { id = "check-added-large-files", exclude = "^packages/[^/]+/docs/assets/" },
 ]
 
 [[repos]]
@@ -18,17 +19,16 @@ hooks = [
     # Runs ahead of the formatters so a stray byte is reported where it is,
     # rather than after Biome has reflowed the line around it (Refs #960).
     { id = "invisible-characters", name = "invisible characters", entry = "node scripts/lint/invisible-characters.mjs --fix", language = "system", types = ["text"] },
-    # Decodes a literal escape such as `\u2014` in markdown prose, before rumdl
-    # reflows the line around it (Refs #967).
-    { id = "unicode-escapes", name = "unicode escapes", entry = "node scripts/lint/unicode-escapes.mjs --fix", language = "system", types = ["markdown"] },
+    # Decodes a literal escape such as `\u2014` in markdown prose and in code
+    # comments, before rumdl or Biome reflows the line around it.
+    { id = "unicode-escapes", name = "unicode escapes", entry = "node scripts/lint/unicode-escapes.mjs --fix", language = "system", types_or = ["markdown", "ts", "javascript"] },
     { id = "biome", name = "biome", entry = "pnpm exec biome check --write --files-ignore-unknown=true", language = "system", types_or = ["javascript", "jsx", "ts", "tsx", "json"] },
     { id = "eslint", name = "eslint", entry = "pnpm exec eslint --fix", language = "system", types = ["ts"], files = "^packages/" },
 ]
 
 [[repos]]
-# Pinned in lockstep with the `rumdl` catalog entry in pnpm-workspace.yaml.
-# 0.2.45+ regressed MD013 sentence-per-line reflow (rvben/rumdl#811); 0.2.24 is
-# the newest release clean on this repo's markdown.
+# Pinned in lockstep with the `rumdl` catalog entry in pnpm-workspace.yaml,
+# which records why (rvben/rumdl#933).
 repo = "https://github.com/rvben/rumdl-pre-commit"
 rev = "v0.2.24"
 hooks = [

@@ -20,23 +20,20 @@ Defect fixes to the surfaces the core already owns are consistently accepted, ev
 Six third-party reports were adopted as capability: the disabled-agent tool description (#594), duplicate completion nudges (#661), `wait: true` on queued and resuming agents (#662), missing completion lifecycle for stopped-while-queued agents (#665), session-navigator scroll width (#670), and session-preview responsiveness on large transcripts (#690).
 
 Completeness of the **public lifecycle-event contract** is treated as first-class work, not polish.
-
-## 665's argument — "the event contract is asymmetric: whether a user's abort produces a terminal event depends on whether the limiter had admitted the agent yet — a scheduling accident, not a semantic difference" — was accepted, and #466 (resume skipping the completion channels) was fixed for the same reason
-
+#665's argument — "the event contract is asymmetric: whether a user's abort produces a terminal event depends on whether the limiter had admitted the agent yet — a scheduling accident, not a semantic difference" — was accepted, and #466 (resume skipping the completion channels) was fixed for the same reason.
 `architecture.md` records the resulting invariant in the state-machine notes: "a queued stop publishes the same events, session entry, and nudge a running stop does."
 
 A **user-authored, default-off, global/project settings key** is an accepted shape for a policy the core must consult.
 `excludedExtensionPackages` landed this way (#696/#697), and the ADR amendment states the test it passed: "Default inheritance is unchanged — an absent or empty list reproduces prior behavior exactly" ([ADR-0002], "Amendment: prevent-load ships as a settings key, not a provider seam").
 
 Clarifying and then documenting an existing contract, rather than changing it, is an accepted resolution.
-
-## 725 asked whether the child tool-registry cap was intended; the answer was to document it (`docs/configuration.md` "Tool selection", `architecture.md` "Child tool selection") and to fix the two real defects underneath (YAML-sequence `tools:` parsing, a recursion guard that did not survive a tool-registry refresh)
+#725 asked whether the child tool-registry cap was intended; the answer was to document it (`docs/configuration.md` "Tool selection", `architecture.md` "Child tool selection") and to fix the two real defects underneath (YAML-sequence `tools:` parsing, a recursion guard that did not survive a tool-registry refresh).
 
 Cosmetic and rendering changes that reduce a real defect class are in scope: the turn/compaction glyph replacement (#681) was adopted, and the maintainer generalized it by centralizing glyph literals into `src/ui/glyphs.ts` first.
 
 Internal refactoring toward the minimal-core target is a standing in-scope activity, sequenced by phase (`packages/pi-subagents/docs/architecture/history/`, phases 1 through 21).
 
-### Candidate non-goals
+## Candidate non-goals
 
 - **Time-based scheduling (cron / interval / one-shot dispatch)** — design principle 4: "No time-based scheduling — cron-style timed dispatch (upstream's `schedule.ts` subsystem) is removed from the core (#52).
   Timed dispatch is a separate concern that any extension can implement by calling `spawn()` on the published API."
@@ -134,7 +131,7 @@ Internal refactoring toward the minimal-core target is a standing in-scope activ
   The only durable adjacent fact is that per-agent control already exists — `run_in_background` is a documented agent-frontmatter key defaulting to `false` (`packages/pi-subagents/docs/configuration.md`, frontmatter table) — which is a mechanism, not a rationale.
   The README cannot assert this boundary with a citation today; the operator must supply the reason or drop the candidate.
 
-#### Already stated in the README
+### Already stated in the README
 
 These candidates are present in the README today and should be **cross-referenced, not restated**, by the charter section.
 
@@ -154,7 +151,7 @@ These candidates are present in the README today and should be **cross-reference
 
 Everything else in the candidate list above is **not** currently asserted in the README.
 
-### Adjacent routing signal
+## Adjacent routing signal
 
 | Capability                                                                             | Owning package or surface                                                                                    | Evidence                                                                                                                                                  |
 | -------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -172,7 +169,7 @@ Everything else in the candidate list above is **not** currently asserted in the
 Three issues closed as not-planned (#257 "Extract ChildSessionFactory from runner", #258 "Agent owns session lifecycle", #259 "Dissolve runner concept") route internally rather than to another package: they were the "agent collaborator architecture" of Phase 16, abandoned by [ADR-0002] ("#256 is superseded (worktree was placed in the wrong layer); #257 is parked (it polished a subsystem slated for eviction)").
 They are evidence of a rejected *internal* direction, not of a scope boundary against outside requests.
 
-### Gaps
+## Gaps
 
 - **The foreground default.**
   Nothing in any ADR, design principle, or doc explains why `run_in_background` defaults to `false` at the tool level, or whether a global override is undesirable. #613 and #740 have sat open without a stated position.

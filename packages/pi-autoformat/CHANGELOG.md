@@ -1,5 +1,16 @@
 # Changelog
 
+## [5.1.11](https://github.com/gotgenes/pi-packages/compare/pi-autoformat-v5.1.10...pi-autoformat-v5.1.11) (2026-10-02)
+
+
+### Bug Fixes
+
+* **pi-autoformat:** stop writing success summaries to the console without a UI ([ee8787d](https://github.com/gotgenes/pi-packages/commit/ee8787d71362640910cf6fe8073702c4e26afabf)), closes [#1010](https://github.com/gotgenes/pi-packages/issues/1010)
+
+### Documentation
+
+* **pi-autoformat:** document silent success outside a UI ([6fffa74](https://github.com/gotgenes/pi-packages/commit/6fffa74878da4651fa788d5a7482223df00d7701)), closes [#1010](https://github.com/gotgenes/pi-packages/issues/1010)
+
 ## [5.1.10](https://github.com/gotgenes/pi-packages/compare/pi-autoformat-v5.1.9...pi-autoformat-v5.1.10) (2026-09-19)
 
 

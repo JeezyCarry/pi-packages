@@ -15,6 +15,9 @@ The same log answers diagnostic questions: counting an `event` per day and again
 A long-lived JSONL log is a schema-drift surface: entries from 2026-08-17 carry `surface`/`matchedPattern` and no `message`, so a `message`-keyed scan silently drops them.
 Validate a scan against a raw sample from each era before aggregating, and commit the script beside any number a durable record cites (Refs #639).
 
+A rule's zero hits in the log bound nothing about its false positives.
+When over-matching would drop a projection (fail-open), run benign inputs built to trip the rule through the real `BashProgram.parse` before accepting it (#995: `grep HOME ~/.bashrc` under a rule matching any `HOME` argument).
+
 The review log records decisions, so it cannot price a change that newly prompts on commands the gate allowed silently; the session transcripts hold every `bash` tool call the agent ran (#992: 70,961 unique commands):
 
 ```bash

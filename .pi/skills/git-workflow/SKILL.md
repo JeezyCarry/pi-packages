@@ -33,7 +33,7 @@ Run the check unpiped, or test `${PIPESTATUS[0]}`.
 To keep the output short without losing the gate, redirect rather than pipe: `pnpm run check >/tmp/check.log 2>&1 || tail -30 /tmp/check.log`.
 Do not append `; echo $?` to that recipe — on the failing branch `$?` is `tail`'s, so a failed gate prints `0`; capture the gate's own status first (`cmd >log 2>&1; rc=$?`).
 That redirect hides Biome findings at **warning** level, which exit 0 — `pnpm run lint` reports PASS while new warnings accumulate.
-After adding or heavily editing files, count them: `pnpm run lint >/tmp/l.log 2>&1; grep -c 'lint/' /tmp/l.log || true` — `grep -c` exits 1 on a zero count.
+After adding or heavily editing files, count them: `pnpm run lint >/tmp/l.log 2>&1; grep -cE 'lint/[A-Za-z]+/' /tmp/l.log || true` — `grep -c` exits 1 on a zero count, and a bare `lint/` also matches the echoed `scripts/lint/…` command.
 `biome check --write` reports `No fixes applied` for a warning, whose fix is unsafe-classified — hand-edit it, or `--write --unsafe` the one file.
 `rumdl` caches per markdown file keyed on that file's own content, but `MD057` (relative-link existence) depends on the filesystem around it — so moving or renaming a linked-to file leaves every unchanged doc that links to it cached as clean.
 After a commit that moves or renames files, clear the cache before trusting the gate: `find .rumdl_cache -type f -delete`.
@@ -60,6 +60,7 @@ The note ships to the `BREAKING CHANGE:` footer, the generated CHANGELOG, and th
 
 Do not put `Closes #N` / `Fixes #N` / `Resolves #N` in commit messages.
 `/ship` posts a curated close comment (implemented-in SHA, behavior summary) via `issue_close`; a commit keyword auto-closes the issue on push and pre-empts that comment, leaving the issue with no summary.
+GitHub matches the keyword anywhere in the message, not only as a footer: "the fix #1004 proposed" closes #1004, so write "#1004's fix" instead.
 Reference issues as `(#N)` in the subject or `Refs #N` in the body instead.
 Still separate footer tokens (`Refs #N`, `BREAKING CHANGE:`) from the body with a blank line for readability; it is not enforced — `committed` validates only the header grammar.
 Credit a contributor with `Co-authored-by:` whenever their **accepted design** ships, whether or not their patch was taken and whether or not they opened a PR — a constraint or mechanism adopted from an issue, a PR review, or a comment thread all qualify.

@@ -39,6 +39,7 @@ export function makePaths(
     forwardingDir: "/test/agent/sessions/permission-forwarding",
     globalLogsDir: "/test/agent/logs",
     piInfrastructureDirs: ["/test/agent", "/test/agent/git"],
+    piInfrastructureExcludedDirs: ["/test/agent/logs"],
     ...overrides,
   };
 }
@@ -109,7 +110,7 @@ export function makeFakePermissionManager() {
     isToolFullyDenied: vi
       .fn<(toolName: string, agentName?: string) => boolean>()
       .mockReturnValue(false),
-    getConfigIssues: vi.fn((): string[] => []),
+    getPolicyIssues: vi.fn((): string[] => []),
   };
 }
 
