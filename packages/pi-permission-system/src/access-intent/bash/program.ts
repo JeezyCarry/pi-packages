@@ -1,3 +1,4 @@
+import type { DeclaredCommandEffects } from "#src/config/command-effects-config";
 import type { PathNormalizer } from "#src/path/path-normalizer";
 import {
   type BashExternalPath,
@@ -15,6 +16,20 @@ import { ShellVariables } from "./shell-variable-expansion";
 import { withSalvagedRoots } from "./unresolved-salvage";
 
 export type { BashCommand, BashExternalPath, BashPathRuleCandidate };
+
+/** What a caller may tell {@link BashProgram.parse} beyond the command text. */
+export interface BashParseOptions {
+  /**
+   * An aliased shell tool's working directory (#574), which seeds the initial
+   * effective base as if the command were prefixed with `cd <workdir>`.
+   */
+  readonly workdir?: string;
+  /**
+   * The user's `commandEffects` declarations, consulted for a command the
+   * pure-reader core proves nothing about. Absent means none.
+   */
+  readonly commandEffects?: DeclaredCommandEffects;
+}
 
 /**
  * A bash command parsed once into a born-ready representation.
@@ -56,7 +71,7 @@ export class BashProgram {
   static async parse(
     command: string,
     normalizer: PathNormalizer,
-    options?: { workdir?: string },
+    options?: BashParseOptions,
   ): Promise<BashProgram> {
     return BashProgram.build(await getParser(), command, normalizer, options);
   }
@@ -71,7 +86,7 @@ export class BashProgram {
   static parseSync(
     command: string,
     normalizer: PathNormalizer,
-    options?: { workdir?: string },
+    options?: BashParseOptions,
   ): BashProgram | null {
     const parser = getWarmBashParser();
     if (!parser) return null;
@@ -83,7 +98,7 @@ export class BashProgram {
     parser: BashReparser,
     command: string,
     normalizer: PathNormalizer,
-    options?: { workdir?: string },
+    options?: BashParseOptions,
   ): BashProgram {
     const tree = parser.parse(command);
     if (!tree) return new BashProgram(command, [], [], []);
@@ -94,10 +109,12 @@ export class BashProgram {
           ShellVariables.scan([tree.rootNode, ...salvaged]),
         );
         const { externalAccesses, ruleCandidates, argumentSpellings } =
-          new BashPathResolver(normalizer, words, options?.workdir).resolve(
-            tree.rootNode,
-            salvaged,
-          );
+          new BashPathResolver(
+            normalizer,
+            words,
+            options?.workdir,
+            options?.commandEffects,
+          ).resolve(tree.rootNode, salvaged);
         return new BashProgram(
           command,
           [

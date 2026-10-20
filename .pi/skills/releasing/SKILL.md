@@ -34,6 +34,8 @@ Never name a package that `next-version.sh` prints nothing for — `prepare-rele
 The run's three jobs are `prepare` → `publish` → `github-release`.
 If `prepare` fails, nothing was tagged and the release can simply be re-dispatched.
 If a later job fails, the tags are already pushed — fix the cause and re-run that job; re-dispatching would refuse on the existing tag.
+A just-published version can 404 on the npm registry for a few minutes, and `pnpm view` serves the stale packument meanwhile.
+The `publish` job's `Published package <name>@<version>` log line is the evidence; do not poll the registry.
 
 Versions and changelogs come from [git-cliff](https://git-cliff.org) reading local git, with no network in the derivation.
 See `docs/decisions/0002-git-cliff-release-automation.md` for why, and for the accepted residual (there is no release-PR review gate).

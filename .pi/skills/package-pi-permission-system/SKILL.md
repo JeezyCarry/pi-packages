@@ -58,6 +58,7 @@ Run `pnpm --silent fallow guard <file>` before adding a cross-directory import: 
   A bare family key is **load-time sugar**: `expandDirectionalSugar` (`src/policy/normalize.ts`), called once per scope inside `mergeScopesWithOrigins` before origin bookkeeping and the merge, rewrites it into both directional members, sugar entries first and explicit directional entries appended after, whatever the file's key order.
   The mechanism — the resolver's family fold, per-token effect proofs, per-pattern session grants, and their constraints — is ADR 0013 and `docs/architecture/architecture.md` (`normalize.ts`, `permission-resolver.ts`, `command-effects.ts`, `session-approval.ts` entries).
 - Wildcard matching must be explicit and tested — silent over-matching is a permission bypass.
+- A wrapper option grammar that unions BSD and GNU is verified by running both installed binaries over every option the grammar lists, long names included: BSD `env` has no long options and reads `--unset FOO` as `-u nset`, then runs `FOO`.
 - `*` already crosses directory boundaries; `**` is not a distinct globstar and compiles identically.
   Write `~/dev/*`, never `~/dev/**` — in config examples, ADRs, schema descriptions, and tests alike (Refs #806).
 - Prefer config patterns over new runtime mechanisms.
@@ -125,6 +126,7 @@ The `permission` object uses deep-shallow merge; scalar fields use simple replac
 - When adding a field, define it in `unifiedConfigSchema` (`config-schema.ts`, with `.meta({ description, markdownDescription })`) and regenerate the schema (`pnpm run gen:schema`); `UnifiedPermissionConfig` is inferred from it.
   Then carry it through `PermissionSystemExtensionConfig` (`extension-config.ts`) and merge it in `mergeUnifiedConfigs()` (`config-loader.ts` — a number goes in its "Number scalars" loop).
   A field on the runtime type but not the merge intermediate is silently dropped before runtime.
+  `commandEffects` is the one exception: its scope is provenance the review log reports, so `loadAndMergeConfigs` folds it per layer into `declaredCommandEffects` and `ConfigStore` holds it beside the runtime config, where `save()` cannot drop it.
   Omitting a field from `UnifiedPermissionConfig` that `normalizePermissionSystemConfig` reads is a **compile error** — `normalizePermissionSystemConfig` reads fields directly from the typed `UnifiedPermissionConfig` parameter, so `tsc` catches the gap immediately.
 - When a config example sets a policy for `write`, include the same policy for `edit` — both tools modify files and users expect them gated together.
 - `promptMaxRows` (24) and `promptFieldMaxWidth` (400) bound what an ask prompt renders; `resolveRenderBudget` (`src/presentation/dialog-renderer.ts`) owns their defaults, so neither belongs in `DEFAULT_EXTENSION_CONFIG`.

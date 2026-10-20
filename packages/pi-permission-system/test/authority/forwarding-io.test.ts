@@ -486,11 +486,47 @@ describe("readForwardedPermissionRequest — payload field", () => {
         commandContext: null,
         matchedSpelling: null,
         executedUnit: null,
+        decidingPath: {
+          path: "/outside/x",
+          effect: "unproven",
+          effectSource: "unproven",
+        },
       },
       evidence: [{ label: "command", text: "git push", detail: null }],
     });
     const parsed = writeAndRead({ ...baseRequest(), payload });
     expect(parsed?.payload).toEqual(payload);
+  });
+
+  it("reads request facts without a deciding path as having none (version skew)", () => {
+    const payload = makePromptPayload();
+    const { decidingPath: _absent, ...olderRequest } = payload.request;
+    const parsed = writeAndRead({
+      ...baseRequest(),
+      payload: { ...payload, request: olderRequest },
+    });
+    expect(parsed?.payload).toBeDefined();
+    expect(parsed?.payload?.request.decidingPath).toBeNull();
+  });
+
+  it.each([
+    [
+      "an unknown effect source",
+      { path: "/x", effect: "read", effectSource: "guessed" },
+    ],
+    [
+      "an unknown effect",
+      { path: "/x", effect: "delete", effectSource: "core" },
+    ],
+    ["a non-string path", { path: 42, effect: "read", effectSource: "core" }],
+    ["a non-object", "/x"],
+  ])("drops a payload whose deciding path has %s", (_label, decidingPath) => {
+    const payload = makePromptPayload();
+    const parsed = writeAndRead({
+      ...baseRequest(),
+      payload: { ...payload, request: { ...payload.request, decidingPath } },
+    });
+    expect(parsed?.payload).toBeUndefined();
   });
 
   it("reads request facts without a matched spelling as having none (version skew)", () => {

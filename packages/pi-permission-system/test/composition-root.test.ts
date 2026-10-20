@@ -2452,6 +2452,34 @@ describe("configured prompt preferences reach the inline dialog", () => {
     rmSync(cwd, { recursive: true, force: true });
   });
 
+  it("denies a prompt nobody answers within promptTimeoutMs, and tells the agent so", async () => {
+    writeGlobalConfig({
+      permission: { "*": "allow", demo: "ask" },
+      promptTimeoutMs: 20,
+    });
+
+    const cwd = mkdtempSync(join(tmpdir(), "pi-perm-unanswered-cwd-"));
+    const pi = makeFakePi({ toolNames: ["demo"] });
+    piPermissionSystemExtension(pi as unknown as ExtensionAPI);
+
+    const { ctx } = makeTuiCtx(cwd);
+    await fireSessionStart(pi, ctx);
+
+    const decision = await pi.fire(
+      "tool_call",
+      { toolName: "demo", toolCallId: "unanswered-ask", input: {} },
+      ctx,
+    );
+
+    expect(decision).toEqual({
+      block: true,
+      reason:
+        "[pi-permission-system] Nobody answered the approval prompt for this 'demo' call (rule '*') within 0.02s.",
+    });
+
+    rmSync(cwd, { recursive: true, force: true });
+  });
+
   describe("notification text", () => {
     async function openPrompt(sessionName?: string) {
       writeGlobalConfig({
@@ -2582,6 +2610,35 @@ describe("configured prompt preferences reach the inline dialog", () => {
   // debug log and nothing else, because the factory-time priming refresh
   // recorded the warning as delivered while having no ctx to deliver it.
   describe("a config issue present at session start", () => {
+    it("names the commandEffects declarations for core words and wrappers", async () => {
+      writeGlobalConfig({
+        permission: { "*": "ask", bash: { "*": "ask" } },
+        commandEffects: { sed: { effects: "read" }, xargs: { effects: [] } },
+      });
+
+      const cwd = mkdtempSync(join(tmpdir(), "pi-perm-shadow-cwd-"));
+      const pi = makeFakePi({ toolNames: ["demo"] });
+      piPermissionSystemExtension(pi as unknown as ExtensionAPI);
+
+      const { ctx, notified } = makeTuiCtx(cwd);
+      await fireSessionStart(pi, ctx);
+
+      expect(
+        notified.filter((message) =>
+          message.includes(
+            "commandEffects declares 'sed', a pure-reader core command.",
+          ),
+        ),
+      ).toHaveLength(1);
+      expect(
+        notified.filter((message) =>
+          message.includes("commandEffects declares 'xargs', a wrapper."),
+        ),
+      ).toHaveLength(1);
+
+      rmSync(cwd, { recursive: true, force: true });
+    });
+
     it("is shown by session_start alone, before the first turn", async () => {
       // The shape `detectPermissiveBashFallback` exists to flag.
       writeGlobalConfig({ permission: { "*": "allow" } });

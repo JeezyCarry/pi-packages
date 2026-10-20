@@ -86,6 +86,13 @@
       "minimum": 1,
       "maximum": 9007199254740991
     },
+    "promptTimeoutMs": {
+      "description": "How long a permission prompt, once shown, waits for an answer before it is dismissed and the request denied, in milliseconds. Omit for no timer (the default). Pressing any key in the inline dialog stops the timer.",
+      "markdownDescription": "How long a permission prompt, once shown, waits for an answer before it is dismissed and the request denied, in milliseconds.\n\nOmit for no timer (the default): a prompt waits until someone answers it. The clock starts when the prompt is shown, not when the request is raised, so a request queued behind another prompt gets its own full window. In the inline TUI dialog, pressing any key stops the timer, so a prompt you have started answering is never cut off.\n\nThe timeout only ever **denies**, and the agent is told nobody answered. It applies to prompts this session shows, including requests forwarded from its subagents; keep it below `forwardingTimeoutMs` so a forwarded request is answered before the subagent stops waiting.",
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9007199254740991
+    },
     "promptMaxRows": {
       "description": "Maximum rows a permission prompt renders before eliding its evidence. Omit to use the default (24).",
       "markdownDescription": "Maximum rows a permission prompt renders before eliding its evidence.\n\nOmit to use the default (24). The request's own facts — the requesting agent, the tool, the matched rule, the decision-relevant value — are never elided by this budget; what gives way is the supporting evidence, and `Ctrl+O` expands the prompt to the complete request.",
@@ -354,6 +361,33 @@
           }
         }
       ]
+    },
+    "commandEffects": {
+      "type": "object",
+      "propertyNames": {
+        "type": "string",
+        "pattern": "^[^/\\\\\\s]+$",
+        "description": "A command's bare basename, matched exactly against the command's head word."
+      },
+      "additionalProperties": {
+        "$ref": "#/$defs/commandEffectsEntry"
+      },
+      "description": "Declares the filesystem effects of your own bash commands, so a declared reader's path operands consult only the _read surfaces. Keys are bare command basenames; subcommands match exactly; an empty effects array withdraws the operands from the path surfaces.",
+      "markdownDescription": "Declares the filesystem effects of your own bash commands, so a path a declared reader names consults only `path_read` / `external_directory_read` rather than both directions.\n\nKeys are bare command basenames (`git`, never `/usr/bin/git`), and `subcommands` match the following word exactly (`git -C dir log` is not `git log`). `effects` is `\"read\"`, `\"write\"`, or an array; `[]` declares that the operands touch no file, which withdraws them from the `path` and `external_directory` surfaces while `bash` rules still govern the command. An `unlessOption` stem seen anywhere in the command withdraws the declaration. An undeclared command or subcommand is unknown, and consults both surfaces.\n\nA declaration never overrides the built-in pure-reader core (`cat`, `sed`, `find`, …), and never lifts the indirection-wrapper floor (`xargs git log` still asks); a declaration keyed by a wrapper (`xargs`, `sudo`, `env`, …) is ignored.\n\nExample:\n\n```json\n\"commandEffects\": {\n  \"git\": { \"unlessOption\": [\"--output\"], \"subcommands\": { \"log\": \"read\", \"diff\": \"read\" } },\n  \"officecli\": { \"effects\": [] }\n}\n```\n\n**Merge order:** shallow-merge by command across global → project. A project entry replaces a colliding command whole but never drops a global one. Agent frontmatter cannot declare effects.",
+      "examples": [
+        {
+          "git": {
+            "unlessOption": ["--output"],
+            "subcommands": {
+              "log": "read",
+              "diff": "read"
+            }
+          },
+          "officecli": {
+            "effects": []
+          }
+        }
+      ]
     }
   },
   "additionalProperties": false,
@@ -418,6 +452,74 @@
       "required": ["action"],
       "additionalProperties": false,
       "description": "Deny with an optional custom reason shown to the agent when the action is blocked."
+    },
+    "commandEffectsEntry": {
+      "type": "object",
+      "properties": {
+        "effects": {
+          "anyOf": [
+            {
+              "type": "string",
+              "enum": ["read", "write"],
+              "description": "A filesystem effect: read (the command only reads its path operands) or write (it may modify them)."
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": ["read", "write"],
+                "description": "A filesystem effect: read (the command only reads its path operands) or write (it may modify them)."
+              }
+            }
+          ],
+          "description": "The filesystem effects of a command's path operands: \"read\", \"write\", or an array of them. An empty array declares that the operands touch no file, so they are withdrawn from the path surfaces."
+        },
+        "unlessOption": {
+          "description": "Option stems whose appearance anywhere in the command withdraws the declaration, so its path operands fall back to consulting both directional surfaces.",
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^-{1,2}[^-=\\s][^=\\s]*$",
+            "description": "An option whose appearance anywhere in the command withdraws the declaration (e.g. '-i', '--in-place')."
+          }
+        },
+        "subcommands": {
+          "description": "Subcommands, keyed by the exact word that follows the command (or its parent subcommand). A value is a nested entry or, as a shorthand, its effects.",
+          "type": "object",
+          "propertyNames": {
+            "type": "string",
+            "pattern": "^[^-\\s]\\S*$",
+            "description": "A subcommand word, matched exactly."
+          },
+          "additionalProperties": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/commandEffectsEntry"
+              },
+              {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "enum": ["read", "write"],
+                    "description": "A filesystem effect: read (the command only reads its path operands) or write (it may modify them)."
+                  },
+                  {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "enum": ["read", "write"],
+                      "description": "A filesystem effect: read (the command only reads its path operands) or write (it may modify them)."
+                    }
+                  }
+                ],
+                "description": "The filesystem effects of a command's path operands: \"read\", \"write\", or an array of them. An empty array declares that the operands touch no file, so they are withdrawn from the path surfaces."
+              }
+            ]
+          }
+        }
+      },
+      "additionalProperties": false,
+      "description": "What a command does to the filesystem paths it is given: its effects, the options that withdraw the declaration, and its subcommands."
     }
   }
 }

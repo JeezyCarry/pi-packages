@@ -1299,6 +1299,7 @@ describe("resolveBashCommandCheck: env, xargs, and doas option grammars", () => 
         "GNU --max-lines takes no following word, so rm runs",
       ],
       ["env -P cat rm x", "rm runs, searched for in cat"],
+      ["env --unset rm cat x", "BSD env reads -u nset, so rm runs"],
       ["env -Srm cat", "-S splits rm into the command"],
       ["env -C /etc cat shadow", "cat reads /etc/shadow, not ./shadow"],
       ["env --chdir /etc cat shadow", "cat reads /etc/shadow, not ./shadow"],
@@ -1337,6 +1338,92 @@ describe("resolveBashCommandCheck: env, xargs, and doas option grammars", () => 
       expect(result.matchedPattern).toBe("*");
       expect(result.floorExemption).toBe("core-reader");
     });
+  });
+});
+
+describe("resolveBashCommandCheck: a computed word in a wrapper's options", () => {
+  beforeAll(async () => {
+    await warmBashParser();
+  });
+
+  const policy: Record<string, PermissionState> = {
+    "*": "allow",
+    "rm *": "deny",
+  };
+
+  it.each([
+    ["sudo -u $U cat x", 'U="root rm y" runs rm y cat x as root'],
+    ["sudo FOO=$Y cat x", 'Y="1 rm y" runs rm y cat x as root'],
+    ["env FOO=$Y cat x", 'Y="1 rm y" runs rm y cat x'],
+    ["env -u $U cat x", 'U="X rm" runs rm cat x'],
+    ["xargs -n $N cat", 'N="1 rm" runs rm cat'],
+    ["doas -u $U cat x", 'U="root rm y" runs rm y cat x as root'],
+    ["timeout $D cat x", 'D="5 rm" runs rm cat x'],
+    ['sudo -u "$U" cat x', "a nameref to an array splits the quoted word"],
+  ])("keeps the floor for %s (%s)", (command) => {
+    const result = decide(policy, command);
+    expect(result.state).toBe("ask");
+    expect(result.matchedPattern).toBe("<indirection-bash-wrapper>");
+  });
+});
+
+describe("resolveBashCommandCheck: an env naming no command", () => {
+  beforeAll(async () => {
+    await warmBashParser();
+  });
+
+  const permissive: Record<string, PermissionState> = { "*": "allow" };
+
+  describe("resolves by its own rule", () => {
+    it.each([
+      ["env", "env"],
+      ["env | rg '^PI_'", "env"],
+      ["env -0", "env -0"],
+      ["env -i", "env -i"],
+      ["env -u FOO", "env -u FOO"],
+      ["env -", "env -"],
+      ["env FOO=1", "env FOO=1"],
+      ["env > /tmp/x", "env"],
+    ])("allows %s under a permissive policy", (command, unit) => {
+      const result = decide(permissive, command);
+      expect(result.state).toBe("allow");
+      expect(result.matchedPattern).toBe("*");
+      expect(result.floorExemption).toBe("no-command");
+      expect(result.command).toBe(unit);
+      expect(result.floor).toBeUndefined();
+    });
+  });
+
+  describe("keeps the floor", () => {
+    it.each([
+      ["env $X", "a computed word names the command"],
+      ['env "$X"', "a computed word names the command"],
+      ["env -u $X", 'X="FOO rm" runs rm'],
+      ["env -S 'rm x'", "-S splits its value into the command"],
+      ["env --unset sh", "BSD env reads -u nset, so sh runs"],
+      ["sudo env", "only the outermost layer is read"],
+    ])("for %s (%s)", (command) => {
+      const result = decide(permissive, command);
+      expect(result.state).toBe("ask");
+      expect(result.matchedPattern).toBe("<indirection-bash-wrapper>");
+    });
+  });
+
+  describe("an explicit rule on env", () => {
+    it.each(["ask", "deny"] as const)("keeps env: %s", (state) => {
+      const result = decide({ "*": "allow", env: state }, "env");
+      expect(result.state).toBe(state);
+      expect(result.matchedPattern).toBe("env");
+    });
+  });
+
+  describe("its session suggestion", () => {
+    it.each(["env -u FOO", "env FOO=1"])(
+      "keeps %s whole, so a grant covers no command behind env",
+      (command) => {
+        expect(suggestBashPattern(command)).toBe(command);
+      },
+    );
   });
 });
 

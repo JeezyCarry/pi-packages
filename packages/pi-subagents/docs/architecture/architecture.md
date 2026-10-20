@@ -170,10 +170,6 @@ classDiagram
         +getContextPercent(): number | null
         +subscribeToUpdates(fn): unsub | undefined
         +messages: readonly unknown[]
-        +completeRun(result)
-        +failRun(err)
-        +completeResume(result)
-        +failResume(err)
         +disposeSession()
     }
 
@@ -284,12 +280,12 @@ stateDiagram-v2
 A steer (`steer_subagent`, `SubagentsService.steer()`) redirects a running agent and changes no status.
 The turn budget is not a status either: it is the live `turnBudget` (`{ used, maxTurns, phase }`) the turn loop reports to the record before the first turn and after each turn boundary.
 A `TurnBudgetTracker` (`turn-limits.ts`) counts successful turns and decides when `SubagentSession` warns the child (a context-only custom message once `wrapUpTurns` turns remain, which forces no turn) and when it stops the run (after a ceiling turn that ran tools, or as a turn starts past the ceiling).
-`phase` is `warned` once the warning went out and `exhausted` when the harness stopped the run: the one case `completeRun` and `completeResume` end `aborted`.
-A resume runs a fresh tracker under the initial run's limits.
+`phase` is `warned` once the warning went out and `exhausted` when the harness stopped the run: the one case a run ends `aborted`.
+Every run, the initial one or a resume, gets a fresh tracker under the limits the session resolved at creation (`resolveTurnLimits`).
 
 Note: `markStopped` always succeeds regardless of current status.
 Other terminal transitions guard against overwriting `stopped` — once an agent is stopped, only `resetForResume` can return it to `running`.
-`stopQueued` composes `markStopped` with a never-started marker and, like `completeRun`/`failRun`, notifies the lifecycle observer — so a queued stop publishes the same events, session entry, and nudge a running stop does.
+`stopQueued` composes `markStopped` with a never-started marker and, like every terminal transition, notifies the lifecycle observer — so a queued stop publishes the same events, session entry, and nudge a running stop does.
 
 ## Execution flow
 
@@ -378,11 +374,11 @@ src/
 ├── lifecycle/                      agent execution and state tracking
 │   ├── subagent-manager.ts         collection manager + observer wiring + session-retention sweep (consumption-aware; an unanswered question holds the safety cap); the resume choke point, refusing from the record's own predicate and reporting a discriminated outcome, so every front door declines the same resumes; a door that returns before the resumed run ends starts one synchronously, and each resume's caller decides whether its outcome is claimed
 │   ├── create-subagent-session.ts  assembly factory: MCP pattern expansion, Pi built-in selection, session creation, spawn-tool denylist, core child-tool install, binding
-│   ├── subagent-session.ts         born-complete child session: turn loop, steer, shutdown-then-dispose teardown
-│   ├── turn-limits.ts              turn-budget policy: TurnBudget, the TurnBudgetTracker that decides warnings and stops, normalizeMaxTurns (minimum 2)
+│   ├── subagent-session.ts         born-complete child session: one turn loop for every run (the first carries the parent context and announces completion), steer, shutdown-then-dispose teardown
+│   ├── turn-limits.ts              turn-budget policy: TurnBudget, the TurnBudgetTracker that decides warnings and stops, resolveTurnLimits (a session's limits, resolved at creation), normalizeMaxTurns (minimum 2)
 │   ├── subagent.ts                 owns full execution lifecycle (run, resume, abort, steer, wait-until-settled); a teardown with no result text to carry its addendum records it as a notice and announces one produced after delivery; answers why a resume would be refused (resumeRefusal, including a live run), which the resume choke point and every result carrier read rather than re-deriving; reports a resume's start as well as its end; wait-until-settled reports whether the waited run settled, has not, or was replaced by a resume (carrying what it ended with)
 │   ├── subagent-state.ts           lifecycle status + metrics + result-delivery value object (transitions, accumulators, classification predicates); delivery carries a revocable claim per carrier (each releases only its own handle), a one-way consumption latch, and a per-run update ledger that renders only what no announcement delivered; numbers its runs and keeps the outcome of the run the latest resume replaced
-│   ├── run-listeners.ts            per-run observer-unsub and signal-detach handles
+│   ├── subagent-run.ts             one run of a subagent: its kind (initial or resume), its own abort lever, caller-signal wiring, and record-observer unsubscribe
 │   ├── record-observer.ts          session-event stats observer; stamps each event as the run's last progress
 │   ├── workspace-bracket.ts        child workspace prepare/dispose lifecycle; idempotent dispose, reports a torn-down workspace
 │   ├── concurrency-limiter.ts       background admission gate: schedules run thunks FIFO against the limit
@@ -471,7 +467,7 @@ They declare this package as an optional peer dependency and use dynamic import 
 - `SubagentManager` — spawn, abort, resume, collection management, observer wiring.
 - `ConcurrencyLimiter` — background admission gate: schedules run thunks FIFO against a configurable concurrency limit.
 - `createSubagentSession` — assembly factory: session creation and extension binding; returns a born-complete `SubagentSession`.
-- `SubagentSession` — the born-complete child session: drives the turn loop (`runTurnLoop`/`resumeTurnLoop`), steers, and disposes (firing `disposed` at true session disposal, so resume executions are registry-detected).
+- `SubagentSession` — the born-complete child session: drives each run's turn loop (`runTurnLoop`), steers, and disposes (firing `disposed` at true session disposal, so resume executions are registry-detected).
 - `child-lifecycle` — publishes the child-execution lifecycle (`spawning`, `session-created` before `bindExtensions()`, `bound` after it resolves, `completed`, `disposed`) on `pi.events`.
   Reactive consumers subscribe: `@gotgenes/pi-permission-system` registers each child session on `session-created`, audits it for a permission node of its own on `bound`, and unregisters it on `disposed`.
   This replaced the former outbound `permission-bridge` (#261, [ADR-0002]) — the core no longer looks up a named consumer.
@@ -588,16 +584,16 @@ If Pi gains a native service registry ([earendil-works/pi#4207]), these accessor
 
 The core emits events on `pi.events` that any extension can observe:
 
-| Channel               | Payload                                                                                          | When                                                                                      |
-| --------------------- | ------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------- |
-| `subagents:started`   | `{ id, type, description }`                                                                      | Agent begins running                                                                      |
-| `subagents:completed` | `{ id, type, description, status, turnBudget?, result?, error?, toolUses, durationMs, tokens? }` | Agent finishes successfully                                                               |
-| `subagents:failed`    | same as `completed` (`buildEventData` shape)                                                     | Agent ends in `error`/`stopped`/`aborted`                                                 |
-| `subagents:resuming`  | `{ id, type, description }`                                                                      | A resume starts, from either front door                                                   |
-| `subagents:resumed`   | same as `completed` (`buildEventData` shape)                                                     | Resumed run reaches a terminal state (`completed`/`error`); `status`/`error` discriminate |
-| `subagents:compacted` | `{ id, type, description, reason, tokensBefore, compactionCount }`                               | Child session compacts                                                                    |
-| `subagents:created`   | `{ id, type, description, isBackground }`                                                        | Background agent created (pre-admission)                                                  |
-| `subagents:steered`   | `{ id, message }`                                                                                | Steering message delivered to a running agent                                             |
+| Channel               | Payload                                                                                          | When                                                                  |
+| --------------------- | ------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------- |
+| `subagents:started`   | `{ id, type, description }`                                                                      | Agent begins running                                                  |
+| `subagents:completed` | `{ id, type, description, status, turnBudget?, result?, error?, toolUses, durationMs, tokens? }` | Agent finishes successfully                                           |
+| `subagents:failed`    | same as `completed` (`buildEventData` shape)                                                     | Agent ends in `error`/`stopped`/`aborted`                             |
+| `subagents:resuming`  | `{ id, type, description }`                                                                      | A resume starts, from either front door                               |
+| `subagents:resumed`   | same as `completed` (`buildEventData` shape)                                                     | Resumed run reaches any terminal state; `status`/`error` discriminate |
+| `subagents:compacted` | `{ id, type, description, reason, tokensBefore, compactionCount }`                               | Child session compacts                                                |
+| `subagents:created`   | `{ id, type, description, isBackground }`                                                        | Background agent created (pre-admission)                              |
+| `subagents:steered`   | `{ id, message }`                                                                                | Steering message delivered to a running agent                         |
 
 These are fire-and-forget broadcast events — no request IDs, no reply channels.
 
@@ -815,7 +811,8 @@ Values as of Phase 23 planning (2026-10-09).
 
 ### Production duplication
 
-Production duplication is 13 lines in one clone group: `SubagentSession.runTurnLoop` and `resumeTurnLoop` (`lifecycle/subagent-session.ts`), the session layer's half of the initial-or-resume fork [#1050] collapses.
+`fallow dupes` reports no clone group between production files.
+Its one clone group (21 lines) pairs `lifecycle/subagent-state.ts` with the test helper `test/helpers/make-subagent.ts`.
 
 ## Improvement roadmap — Phase 23: Runs as first-class
 
@@ -993,7 +990,7 @@ The move gave `ui/` a forward edge to `observation/` for the `*Details` message 
 
 Release: independent
 
-#### [#1049] Give each run its own abort lever, signal wiring, and session subscription (with [#949])
+#### ✅ [#1049] Give each run its own abort lever, signal wiring, and session subscription (with [#949])
 
 **Cause:** the handles a run wires at its start and releases at its end live on the per-agent record, so each run and resume re-mints them by hand (`_abortController` in the constructor, `run()`, and `runResume()`, and one shared `RunListeners`).
 A lever set at one lifecycle edge can then be read at another: Phase 22's [#913], and [#949], where a signal that already fired is wired to a listener that can never fire.
@@ -1007,13 +1004,19 @@ A lever set at one lifecycle edge can then be read at another: Phase 22's [#913]
 - **Commit type:** `refactor:` for the extraction, `fix:` for [#949].
 - **Impact 4 / Risk 3 / Priority 12.**
 
+Landed: `SubagentRun` (`src/lifecycle/subagent-run.ts`) owns one run's abort controller, caller-signal wiring, and record-observer unsubscribe, and `Subagent` keeps the current run; `_abortController` reads 0 and `run-listeners.ts` is gone.
+A caller signal that already fired gives a run born aborted: a spawn stops right after `onStarted`, before the workspace or child session exists, and a resume reaches its turn loop with a fired lever.
+Either loop handed a fired signal takes no turn and returns no text, and the initial loop still emits `subagents:child:completed`; that also stops a child whose `abort(id)` lands during setup.
+The guard lives in one prompt helper both loops share, which removed the `runTurnLoop`/`resumeTurnLoop` production clone group ahead of [#1050].
+`lifecycle/subagent.ts` grew from 834 to 850 lines; the run-kind and `resetForResume` rows are unchanged at 16 and 8.
+
 Release: independent
 
-#### [#1050] Run initial and resumed runs through one lifecycle
+#### ✅ [#1050] Run initial and resumed runs through one lifecycle
 
 **Cause:** whether a run is the initial run or a resume is a property of the run, but it is re-decided in parallel method pairs at three layers (the session's turn loop, the record's run body and terminal transitions, and the lifecycle observer), and the pairs have already diverged.
 A resumed run that wraps up at its turn limit while asking a question keeps its workspace, where an initial run in the same state tears it down: [#1021]'s rule, which [#1022] did not carry to resumes when it gave them a turn budget.
-`fallow dupes` sees the session layer's half as the package's only production clone group.
+`fallow dupes` saw the session layer's half as the package's only production clone group until [#1049] gave both turn loops one prompt helper; the session layer's method pair remains.
 
 - **Smell:** Category C (a repeated discriminator spelled as method pairs), Category A (production duplication), and Category G (the concentrated test-design cluster in `test/lifecycle/subagent.test.ts`).
 - **Target:** `src/lifecycle/subagent-session.ts` (`runTurnLoop`/`resumeTurnLoop`); `src/lifecycle/subagent.ts` (`run`/`runResume`, `completeRun`/`completeResume`, `failRun`/`failResume`); `SubagentLifecycleObserver` and `SubagentManager.buildObserver`; `src/observation/subagent-events-observer.ts`, which maps the run kind to the published channels in one place; and `test/lifecycle/subagent.test.ts` and `test/lifecycle/subagent-session.test.ts`.
@@ -1022,11 +1025,17 @@ A resumed run that wraps up at its turn limit while asking a question keeps its 
   Whether `SubagentManagerObserver`'s `onSubagentResuming`/`onSubagentResumed` collapse too is the plan's call.
 - **Ride-along tidying:** one builder for the `{ id, type, description }` payload the events observer writes by hand at 5 sites, since this step rewrites how that observer maps runs to channels; and in `subagent-session.test.ts`, an assistant-message factory for the literal repeated 10+ times, with the third local session mock folded into the shared ones.
   The payload row reads at most 1.
-- **Outcome:** the run-kind-forked names row reads 0 and `fallow dupes` reports no production clone.
+- **Outcome:** the run-kind-forked names row reads 0 and `fallow dupes` still reports no production clone (met since [#1049]).
   A resumed run follows the initial run's workspace rule, pinned by the missing resume-side test, written first.
   The four terminal methods are private, the `subagent.test.ts` `mock.calls[N]` reads fall to the row's target through a channel-capturing helper, and the `describe` blocks nest by run kind.
 - **Commit type:** `fix:` for the resume's workspace rule; `refactor:` and `test:` for the rest, including the ride-along.
 - **Impact 5 / Risk 3 / Priority 15.**
+
+Landed: both run kinds hold the workspace of a completed run that declared a question, including one that wrapped up at its turn limit.
+The operator chose hold over the initial run's teardown rule, which only [#1021]'s plan had recorded; the user-facing docs already described hold, so the `fix:` changed the initial run and the resume side is pinned as it was.
+`SubagentRun` carries its kind, `Subagent` runs both kinds through one body with private `complete`/`fail`, and the session owns its first run: its turn limits are resolved at creation, and only the first run carries the parent context and emits `subagents:child:completed`.
+The lifecycle observer reports `onRunStarted`/`onRunFinished` and the manager observer `onSubagentRunStarted`/`onSubagentRunFinished`, each with the kind, and `SubagentEventsObserver` maps it to the unchanged published channels in one place.
+The run-kind row reads 0, the payload row 1, the `subagent.test.ts` `mock.calls[N]` row 1 (the `prepare` read its comment explains), and that file nests under one root `describe` with a run-kind grid for the terminal rules; `lifecycle/subagent.ts` fell from 850 to 826 lines.
 
 Release: independent
 
@@ -1118,8 +1127,8 @@ Release: independent
 flowchart TD
     S947["✅ #947<br/>Bounded wait with progress"] -.soft.-> S1051["#1051<br/>The run owns its outcome"]
     S947 -.soft.-> S912["✅ #912<br/>Ask whether resumable"]
-    S1048["✅ #1048<br/>Zone-order moves"] -.soft.-> S1049["#1049<br/>Per-run lever and wiring"]
-    S1049 --> S1050["#1050<br/>One run lifecycle"]
+    S1048["✅ #1048<br/>Zone-order moves"] -.soft.-> S1049["✅ #1049<br/>Per-run lever and wiring"]
+    S1049 --> S1050["✅ #1050<br/>One run lifecycle"]
     S1049 --> S1051
     S1049 --> S1012["#1012<br/>Background resume widget row"]
     S1050 -.soft.-> S1051

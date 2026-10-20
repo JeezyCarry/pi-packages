@@ -328,6 +328,93 @@ const shellToolsSchema = z
     ],
   });
 
+const declaredEffectSchema = z.enum(["read", "write"]).meta({
+  description:
+    "A filesystem effect: read (the command only reads its path operands) or write (it may modify them).",
+});
+
+const declaredEffectsSchema = z
+  .union([declaredEffectSchema, z.array(declaredEffectSchema)])
+  .meta({
+    description:
+      'The filesystem effects of a command\'s path operands: "read", "write", or an array of them. An empty array declares that the operands touch no file, so they are withdrawn from the path surfaces.',
+  });
+
+const optionStemSchema = z
+  .string()
+  .regex(/^-{1,2}[^-=\s][^=\s]*$/, {
+    message:
+      "An option stem starts with '-' or '--' and contains no whitespace or '='.",
+  })
+  .meta({
+    description:
+      "An option whose appearance anywhere in the command withdraws the declaration (e.g. '-i', '--in-place').",
+  });
+
+const subcommandKeySchema = z
+  .string()
+  .regex(/^[^-\s]\S*$/, {
+    message:
+      "A subcommand is one word that does not start with '-' (e.g. 'log').",
+  })
+  .meta({ description: "A subcommand word, matched exactly." });
+
+const commandKeySchema = z
+  .string()
+  .regex(/^[^/\\\s]+$/, {
+    message:
+      "A command is a bare basename (e.g. 'git'), with no path separator or whitespace.",
+  })
+  .meta({
+    description:
+      "A command's bare basename, matched exactly against the command's head word.",
+  });
+
+const commandEffectsEntrySchema = z
+  .strictObject({
+    effects: declaredEffectsSchema.optional(),
+    unlessOption: z.array(optionStemSchema).optional().meta({
+      description:
+        "Option stems whose appearance anywhere in the command withdraws the declaration, so its path operands fall back to consulting both directional surfaces.",
+    }),
+    get subcommands() {
+      return z
+        .record(
+          subcommandKeySchema,
+          z.union([commandEffectsEntrySchema, declaredEffectsSchema]),
+        )
+        .optional()
+        .meta({
+          description:
+            "Subcommands, keyed by the exact word that follows the command (or its parent subcommand). A value is a nested entry or, as a shorthand, its effects.",
+        });
+    },
+  })
+  .meta({
+    id: "commandEffectsEntry",
+    description:
+      "What a command does to the filesystem paths it is given: its effects, the options that withdraw the declaration, and its subcommands.",
+  });
+
+/** The `commandEffects` map: command basename → its declared effects. */
+export const commandEffectsSchema = z
+  .record(commandKeySchema, commandEffectsEntrySchema)
+  .meta({
+    description:
+      "Declares the filesystem effects of your own bash commands, so a declared reader's path operands consult only the _read surfaces. Keys are bare command basenames; subcommands match exactly; an empty effects array withdraws the operands from the path surfaces.",
+    markdownDescription:
+      'Declares the filesystem effects of your own bash commands, so a path a declared reader names consults only `path_read` / `external_directory_read` rather than both directions.\n\nKeys are bare command basenames (`git`, never `/usr/bin/git`), and `subcommands` match the following word exactly (`git -C dir log` is not `git log`). `effects` is `"read"`, `"write"`, or an array; `[]` declares that the operands touch no file, which withdraws them from the `path` and `external_directory` surfaces while `bash` rules still govern the command. An `unlessOption` stem seen anywhere in the command withdraws the declaration. An undeclared command or subcommand is unknown, and consults both surfaces.\n\nA declaration never overrides the built-in pure-reader core (`cat`, `sed`, `find`, …), and never lifts the indirection-wrapper floor (`xargs git log` still asks); a declaration keyed by a wrapper (`xargs`, `sudo`, `env`, …) is ignored.\n\nExample:\n\n```json\n"commandEffects": {\n  "git": { "unlessOption": ["--output"], "subcommands": { "log": "read", "diff": "read" } },\n  "officecli": { "effects": [] }\n}\n```\n\n**Merge order:** shallow-merge by command across global → project. A project entry replaces a colliding command whole but never drops a global one. Agent frontmatter cannot declare effects.',
+    examples: [
+      {
+        git: {
+          unlessOption: ["--output"],
+          subcommands: { log: "read", diff: "read" },
+        },
+        officecli: { effects: [] },
+      },
+    ],
+  });
+
 /**
  * The on-disk config file shape.
  *
@@ -388,6 +475,12 @@ export const unifiedConfigSchema = z
         "How long a subagent waits for the parent session to answer a forwarded permission request, in milliseconds.\n\nOmit to use the default (`600000`, ten minutes). A child whose in-process parent is not draining its inbox at all gives up in a couple of seconds regardless of this value, so lower it only to bound how long you are willing to leave an *unanswered* prompt pending.",
       default: 600000,
     }),
+    promptTimeoutMs: z.number().int().min(1).optional().meta({
+      description:
+        "How long a permission prompt, once shown, waits for an answer before it is dismissed and the request denied, in milliseconds. Omit for no timer (the default). Pressing any key in the inline dialog stops the timer.",
+      markdownDescription:
+        "How long a permission prompt, once shown, waits for an answer before it is dismissed and the request denied, in milliseconds.\n\nOmit for no timer (the default): a prompt waits until someone answers it. The clock starts when the prompt is shown, not when the request is raised, so a request queued behind another prompt gets its own full window. In the inline TUI dialog, pressing any key stops the timer, so a prompt you have started answering is never cut off.\n\nThe timeout only ever **denies**, and the agent is told nobody answered. It applies to prompts this session shows, including requests forwarded from its subagents; keep it below `forwardingTimeoutMs` so a forwarded request is answered before the subagent stops waiting.",
+    }),
     promptMaxRows: z.number().int().min(1).optional().meta({
       description:
         "Maximum rows a permission prompt renders before eliding its evidence. Omit to use the default (24).",
@@ -439,6 +532,7 @@ export const unifiedConfigSchema = z
     }),
     permission: permissionSchema.optional(),
     shellTools: shellToolsSchema.optional(),
+    commandEffects: commandEffectsSchema.optional(),
   })
   .meta({
     title: "PI Permission System Configuration",
@@ -463,6 +557,12 @@ export type FlatPermissionConfig = z.infer<typeof permissionSchema>;
 /** The `shellTools` map: tool name → shell-alias argument mapping. */
 export type ShellToolsConfig = z.infer<typeof shellToolsSchema>;
 
+/** One declared command, or subcommand, in the `commandEffects` map. */
+export type CommandEffectsEntry = z.infer<typeof commandEffectsEntrySchema>;
+
+/** The `commandEffects` map: command basename to its declared effects. */
+export type CommandEffectsConfig = z.infer<typeof commandEffectsSchema>;
+
 /** The raw config file shape after validation (all fields optional). */
 export type UnifiedPermissionConfig = z.infer<typeof unifiedConfigSchema>;
 
@@ -474,9 +574,9 @@ export type PromptNotificationChannel = z.infer<
 /**
  * Derive the published JSON Schema (Draft 2020-12) from the zod source.
  *
- * The three id-tagged sub-schemas (`permissionState`, `permissionMap`,
- * `denyWithReason`) become `$defs` referenced by `$ref`; everything else
- * inlines. The root `$id` is set to the canonical monorepo URL.
+ * The four id-tagged sub-schemas (`permissionState`, `permissionMap`,
+ * `denyWithReason`, and the recursive `commandEffectsEntry`) become `$defs`
+ * referenced by `$ref`; everything else inlines. The root `$id` is set to the canonical monorepo URL.
  */
 export function buildPermissionsJsonSchema(): Record<string, unknown> {
   const { $schema, ...rest } = z.toJSONSchema(unifiedConfigSchema, {

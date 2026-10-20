@@ -3,6 +3,10 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { AccessIntent } from "#src/access-intent/access-intent";
 import { BashProgram } from "#src/access-intent/bash/program";
+import {
+  foldDeclaredCommandEffects,
+  NO_DECLARED_COMMAND_EFFECTS,
+} from "#src/config/command-effects-config";
 import { describeBashExternalDirectoryGate } from "#src/handlers/gates/bash-external-directory";
 import type {
   GateBypass,
@@ -22,10 +26,10 @@ import {
   findEvidence,
   type PromptPayload,
 } from "#src/presentation/prompt-payload";
+import { renderReviewLogFacts } from "#src/presentation/review-log-renderer";
 import { SessionRules } from "#src/session/session-rules";
 import type { PermissionCheckResult } from "#src/types";
 import { getNonEmptyString, toRecord } from "#src/value-guards";
-
 import { makeResolver } from "#test/helpers/gate-fixtures";
 import { createManagerWithConfig } from "#test/helpers/manager-harness";
 
@@ -409,16 +413,19 @@ describe("describeBashExternalDirectoryGate", () => {
       ]);
     });
 
-    it("records the deciding path's effect and blame source in the log", async () => {
+    it("blames the deciding path on its effect and source in the payload, not the log context", async () => {
       const result = (await describeGate(
         makeTcc({ input: { command: "cat /outside/a.ts" } }),
         makeResolver(makeCheckResult("ask")),
       )) as GateDescriptor;
 
-      expect(result.logContext).toMatchObject({
+      expect(result.payload.request.decidingPath).toEqual({
+        path: "/outside/a.ts",
         effect: "read",
         effectSource: "core",
       });
+      expect(result.logContext).not.toHaveProperty("effect");
+      expect(result.logContext).not.toHaveProperty("effectSource");
     });
 
     it("records a retraction as the blame source for a guarded word", async () => {
@@ -428,10 +435,12 @@ describe("describeBashExternalDirectoryGate", () => {
       )) as GateDescriptor;
 
       expect(result.surface).toBe("external_directory");
-      expect(result.logContext).toMatchObject({
+      expect(result.payload.request.decidingPath).toEqual({
+        path: "/outside",
         effect: "unproven",
         effectSource: "retracted",
       });
+      expect(result.logContext).not.toHaveProperty("effectSource");
     });
 
     it("records a retraction when a variable may spell the withdrawing option", async () => {
@@ -441,10 +450,52 @@ describe("describeBashExternalDirectoryGate", () => {
       )) as GateDescriptor;
 
       expect(result.surface).toBe("external_directory");
-      expect(result.logContext).toMatchObject({
+      expect(result.payload.request.decidingPath).toEqual({
+        path: "/outside",
         effect: "unproven",
         effectSource: "retracted",
       });
+      expect(result.logContext).not.toHaveProperty("effectSource");
+    });
+
+    it("records the declaring scope as the blame source for a declared reader", async () => {
+      const tcc = makeTcc({ input: { command: "git log /outside/a.ts" } });
+      const normalizer = new PathNormalizer(
+        pathFlavorForPlatform(process.platform),
+        tcc.cwd,
+      );
+      const program = await BashProgram.parse(
+        "git log /outside/a.ts",
+        normalizer,
+        {
+          commandEffects: foldDeclaredCommandEffects(
+            NO_DECLARED_COMMAND_EFFECTS,
+            { git: { subcommands: { log: "read" } } },
+            "project",
+          ),
+        },
+      );
+
+      const result = describeBashExternalDirectoryGate(
+        tcc,
+        program,
+        makeResolver(makeCheckResult("ask")),
+        normalizer,
+      ) as GateDescriptor;
+
+      expect(result.surface).toBe("external_directory_read");
+      expect(result.payload.request.decidingPath).toEqual({
+        path: "/outside/a.ts",
+        effect: "read",
+        effectSource: "declared-project",
+      });
+      // What the review log persists for every entry of this ask.
+      expect(renderReviewLogFacts(result.payload)).toMatchObject({
+        decidingPath: "/outside/a.ts",
+        effect: "read",
+        effectSource: "declared-project",
+      });
+      expect(result.logContext).not.toHaveProperty("effectSource");
     });
   });
 

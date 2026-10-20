@@ -10,6 +10,7 @@ import type {
 } from "#src/config/config-schema";
 import {
   buildPermissionsJsonSchema,
+  commandEffectsSchema,
   PERMISSIONS_SCHEMA_URL,
   unifiedConfigSchema,
 } from "#src/config/config-schema";
@@ -360,6 +361,74 @@ describe("unifiedConfigSchema", () => {
   });
 });
 
+describe("commandEffectsSchema", () => {
+  describe("accepted shapes", () => {
+    it.each([
+      [
+        "ADR 0013 \u00a77's example",
+        {
+          sed: { effects: "read", unlessOption: ["-i", "--in-place"] },
+          curl: { effects: [], unlessOption: ["-o", "-O", "--output"] },
+          git: {
+            subcommands: {
+              diff: "read",
+              log: "read",
+              remote: { subcommands: { show: "read" } },
+            },
+          },
+        },
+      ],
+      ["an empty effects array", { officecli: { effects: [] } }],
+      ["both effects", { tool: { effects: ["read", "write"] } }],
+      ["a write declaration", { tool: { effects: "write" } }],
+      [
+        "an array shorthand subcommand",
+        { git: { subcommands: { log: ["read"] } } },
+      ],
+      [
+        "a single-dash long stem",
+        { tool: { effects: "read", unlessOption: ["-exec"] } },
+      ],
+      ["an entry with only subcommands", { git: { subcommands: {} } }],
+    ])("accepts %s", (_label, value) => {
+      expect(commandEffectsSchema.safeParse(value).success).toBe(true);
+    });
+  });
+
+  describe("rejected shapes", () => {
+    it.each([
+      ["a path-qualified command key", { "/usr/bin/git": { effects: "read" } }],
+      ["a relative command key", { "./git": { effects: "read" } }],
+      ["a backslash command key", { "bin\\git": { effects: "read" } }],
+      ["a command key with whitespace", { "git log": { effects: "read" } }],
+      ["an empty command key", { "": { effects: "read" } }],
+      ["a dash-led subcommand key", { git: { subcommands: { "-C": "read" } } }],
+      ["an empty subcommand key", { git: { subcommands: { "": "read" } } }],
+      [
+        "an option stem without a dash",
+        { sed: { effects: "read", unlessOption: ["i"] } },
+      ],
+      ["a bare dash stem", { sed: { effects: "read", unlessOption: ["-"] } }],
+      [
+        "a bare double-dash stem",
+        { sed: { effects: "read", unlessOption: ["--"] } },
+      ],
+      [
+        "an option stem with a value",
+        { sed: { effects: "read", unlessOption: ["--output=x"] } },
+      ],
+      ["an unknown effect", { git: { subcommands: { log: "reed" } } }],
+      ["an unknown field", { git: { effect: "read" } }],
+      [
+        "an unknown nested field",
+        { git: { subcommands: { log: { effect: "read" } } } },
+      ],
+    ])("rejects %s", (_label, value) => {
+      expect(commandEffectsSchema.safeParse(value).success).toBe(false);
+    });
+  });
+});
+
 describe("inferred types match the hand-written domain types", () => {
   it("PermissionState is equivalent", () => {
     expectTypeOf<SchemaPermissionState>().toEqualTypeOf<PermissionState>();
@@ -397,10 +466,25 @@ describe("buildPermissionsJsonSchema", () => {
   it("extracts the shared sub-schemas into $defs", () => {
     const defs = schema.$defs as Record<string, unknown>;
     expect(Object.keys(defs).sort()).toEqual([
+      "commandEffectsEntry",
       "denyWithReason",
       "permissionMap",
       "permissionState",
     ]);
+  });
+
+  it("refers a nested subcommand entry back to the shared entry definition", () => {
+    const defs = schema.$defs as Record<string, Record<string, unknown>>;
+    const properties = defs.commandEffectsEntry.properties as Record<
+      string,
+      Record<string, unknown>
+    >;
+    expect(properties.subcommands.additionalProperties).toEqual({
+      anyOf: [
+        { $ref: "#/$defs/commandEffectsEntry" },
+        expect.objectContaining({ anyOf: expect.any(Array) }),
+      ],
+    });
   });
 
   it("preserves markdownDescription for editor hovers", () => {

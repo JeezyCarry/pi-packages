@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [23.4.2](https://github.com/gotgenes/pi-packages/compare/pi-subagents-v23.4.1...pi-subagents-v23.4.2) (2026-10-16)
+
+
+### Bug Fixes
+
+* **pi-subagents:** keep the workspace of a run that wraps up at its turn limit with a question ([083f8e8](https://github.com/gotgenes/pi-packages/commit/083f8e837451e55d2563074489fa5dc8cfefb52a)), closes [#1050](https://github.com/gotgenes/pi-packages/issues/1050)
+
+## [23.4.1](https://github.com/gotgenes/pi-packages/compare/pi-subagents-v23.4.0...pi-subagents-v23.4.1) (2026-10-16)
+
+
+### Bug Fixes
+
+* **pi-subagents:** an abort that lands while a child is starting stops it before its first turn ([e9251f4](https://github.com/gotgenes/pi-packages/commit/e9251f4092872e3a1a177cfe4bb3ad4dd6d3b269)), closes [#1049](https://github.com/gotgenes/pi-packages/issues/1049)
+* **pi-subagents:** a spawn or resume whose signal already fired stops before its first turn ([18b035d](https://github.com/gotgenes/pi-packages/commit/18b035d92c4958fafc2cdbbc1c1f25c3c71909ea)), closes [#1049](https://github.com/gotgenes/pi-packages/issues/1049)
+
 ## [23.4.0](https://github.com/gotgenes/pi-packages/compare/pi-subagents-v23.3.0...pi-subagents-v23.4.0) (2026-10-09)
 
 

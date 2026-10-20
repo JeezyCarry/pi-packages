@@ -60,6 +60,7 @@ It documents design decisions, scope, and the test strategy — essential contex
 
 Run each command from the repo root.
 All must pass before proceeding to Step 2.
+Run each command alone in its own tool call with a tool timeout of at least 900 s, never wrapped in a shorter `timeout` and never batched with another — run concurrently, the suites contend and time out unconfirmed.
 
 1. `pnpm run check` — TypeScript typecheck (`tsc --noEmit`).
 2. `pnpm run lint` — Biome, ESLint, and rumdl linters.

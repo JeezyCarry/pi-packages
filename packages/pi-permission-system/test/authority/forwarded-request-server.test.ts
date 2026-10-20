@@ -440,6 +440,7 @@ describe("processInbox — recorded-authority resolution", () => {
           commandContext: null,
           matchedSpelling: null,
           executedUnit: null,
+          decidingPath: null,
         },
         evidence: [],
         annotations: [],
@@ -711,6 +712,7 @@ describe("processInbox — the child's payload on the escalated ask", () => {
         commandContext: null,
         matchedSpelling: null,
         executedUnit: null,
+        decidingPath: null,
       },
       evidence: [
         { label: "full command", text: "git push --force", detail: null },
@@ -775,6 +777,7 @@ describe("processInbox — the child's payload on the escalated ask", () => {
         commandContext: null,
         matchedSpelling: null,
         executedUnit: null,
+        decidingPath: null,
       },
       evidence: [],
       annotations: [],
@@ -1394,6 +1397,35 @@ describe("processInbox — terminal decision broadcast", () => {
 
     expect(broadcastDecisions()).toMatchObject([
       { requestId: "req-deny", result: "deny", resolution: "user_denied" },
+    ]);
+  });
+
+  test("relays a prompt nobody answered as unanswered, and broadcasts prompt_unanswered", async () => {
+    dir.writeRequest({ id: "req-unanswered", surface: "bash", value: "pwd" });
+    const server = makeServer({
+      escalator: escalatorAnswering({
+        approved: false,
+        state: "denied",
+        confirmationUnavailable: true,
+        decidedBy: { kind: "unanswered", timeoutMs: 60_000 },
+      }),
+    });
+
+    await server.processInbox(servingContext());
+
+    // The child renders "nobody answered" from this decider, so it must cross
+    // the wire intact rather than collapse into a user denial.
+    expect(readResponse(dir, "req-unanswered")).toMatchObject({
+      approved: false,
+      state: "denied",
+      decidedBy: { kind: "unanswered", timeoutMs: 60_000 },
+    });
+    expect(broadcastDecisions()).toMatchObject([
+      {
+        requestId: "req-unanswered",
+        result: "deny",
+        resolution: "prompt_unanswered",
+      },
     ]);
   });
 

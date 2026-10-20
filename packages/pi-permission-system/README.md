@@ -68,6 +68,7 @@ When the dialog prompts, you can approve once or approve a pattern for the rest 
 In an interactive TUI session the prompt is an inline keybind dialog — `y` approve, `s` approve for this session, `n` deny, `r` deny with a reason — where each hotkey arms and a second press confirms (configurable via `doublePressToConfirm`).
 The hotkeys themselves are remappable through `permissionDialogKeys`, which matters if you type with an input method editor: composition mode swallows letter keys before they reach the terminal, and digits do not.
 Set `promptNotifications` (for example `["bell"]`) and the dialog also rings the terminal as it opens, so a session waiting on you in another tab or pane gets flagged.
+For an unattended run, set `promptTimeoutMs` and a prompt nobody answers within that window is denied, with the agent told nobody answered; by default a prompt waits indefinitely, and pressing any key stops the clock ([details](docs/configuration.md#unanswered-prompts)).
 A file-access ask that proves a single direction offers `b` as well, granting the session both directions instead of only the one the gate proved.
 The prompt shows one fact per line — who is asking, the tool, the matched rule, the value being decided — within a row budget, so a large tool input cannot take over the transcript; `Ctrl+O` (`app.tools.expand`) expands it to the complete request.
 See [docs/configuration.md](docs/configuration.md#inline-permission-dialog-tui) for the hotkeys and [docs/session-approvals.md](docs/session-approvals.md) for session-scoped rules and pattern suggestions.
@@ -136,6 +137,8 @@ Project config (policy and runtime knobs) is loaded only once the project is tru
 Within a surface map like `bash` or `mcp`, **last matching rule wins** — put broad catch-alls first and specific overrides after.
 
 The optional `shellTools` field records which non-`bash` tools carry shell semantics (e.g. an `exec_command` tool that replaces native `bash`), so they are gated at full parity with native `bash` — see [docs/configuration.md](docs/configuration.md#shelltools--gating-aliased-shell-tools).
+
+The optional `commandEffects` field declares what your own bash commands do to the paths they are given (`git log` reads; `officecli`'s arguments are not files at all), so a declared reader's paths consult only the `_read` surfaces — see [docs/configuration.md](docs/configuration.md#declaring-your-own-commands-commandeffects).
 
 The optional `authorizerChain` field names registered case-by-case decision links (e.g. a light model judge) to consult when a request lands on `ask`, ahead of the interactive prompt.
 A downstream extension registers a link via `getPermissionsService(sessionId).registerAuthorizer(name, authorize)`; it decides nothing until you name it here (opt-in), config order fixes the chain order, and the chain owner caps any link's `allow` on the `external_directory`/`path` surface families to keep it within your policy — see [docs/configuration.md](docs/configuration.md#authorizer-chain--case-by-case-decision-links).

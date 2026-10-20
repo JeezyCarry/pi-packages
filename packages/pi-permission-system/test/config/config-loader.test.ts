@@ -334,6 +334,25 @@ describe("loadUnifiedConfig", () => {
     expect(result.issues.length).toBeGreaterThan(0);
   });
 
+  it("parses promptTimeoutMs when a valid positive integer is present", () => {
+    const configPath = join(tempDir, "config.json");
+    writeFileSync(configPath, JSON.stringify({ promptTimeoutMs: 60_000 }));
+    const result = loadUnifiedConfig(configPath);
+    expect(result.issues).toEqual([]);
+    expect(result.config.promptTimeoutMs).toBe(60_000);
+  });
+
+  it.each([
+    ["zero", 0],
+    ["a fraction", 1.5],
+    ["a string", "60000"],
+  ])("rejects %s as promptTimeoutMs", (_label, value) => {
+    const configPath = join(tempDir, "config.json");
+    writeFileSync(configPath, JSON.stringify({ promptTimeoutMs: value }));
+    const result = loadUnifiedConfig(configPath);
+    expect(result.issues.length).toBeGreaterThan(0);
+  });
+
   it("parses toolInputPreviewMaxLength when a valid positive integer is present", () => {
     const configPath = join(tempDir, "config.json");
     writeFileSync(
@@ -531,6 +550,21 @@ describe("mergeUnifiedConfigs", () => {
 
     expect(merged.promptMaxRows).toBe(10);
     expect(merged.promptFieldMaxWidth).toBe(400);
+  });
+
+  it("replaces the prompt timeout (project wins)", () => {
+    expect(
+      mergeUnifiedConfigs(
+        { promptTimeoutMs: 60_000 },
+        { promptTimeoutMs: 5_000 },
+      ).promptTimeoutMs,
+    ).toBe(5_000);
+  });
+
+  it("carries the prompt timeout from the base when unoverridden", () => {
+    expect(
+      mergeUnifiedConfigs({ promptTimeoutMs: 60_000 }, {}).promptTimeoutMs,
+    ).toBe(60_000);
   });
 
   it("replaces the review-log field width (project wins)", () => {
@@ -978,6 +1012,66 @@ describe("loadAndMergeConfigs", () => {
       const result = loadAndMergeConfigs(agentDir, cwd, extensionRoot);
 
       expect(result.merged.permission).toEqual({ "*": "ask", bash: "allow" });
+    });
+  });
+
+  describe("commandEffects declarations", () => {
+    it("merges global and project declarations by command, stamping each scope", () => {
+      writeGlobal({
+        commandEffects: {
+          git: { subcommands: { log: "read", diff: "read" } },
+          officecli: { effects: [] },
+        },
+      });
+      writeProject({
+        commandEffects: { git: { subcommands: { status: "read" } } },
+      });
+
+      const result = loadAndMergeConfigs(agentDir, cwd, extensionRoot);
+
+      expect(result.declaredCommandEffects).toEqual({
+        git: { scope: "project", entry: { subcommands: { status: "read" } } },
+        officecli: { scope: "global", entry: { effects: [] } },
+      });
+      expect(result.issues).toEqual([]);
+    });
+
+    it("counts the legacy files toward their own scopes", () => {
+      writeLegacyGlobalPolicy({
+        commandEffects: { strings: { effects: "read" } },
+      });
+      writeLegacyProjectPolicy({
+        commandEffects: { git: { effects: "read" } },
+      });
+
+      const result = loadAndMergeConfigs(agentDir, cwd, extensionRoot);
+
+      expect(result.declaredCommandEffects).toEqual({
+        strings: { scope: "global", entry: { effects: "read" } },
+        git: { scope: "project", entry: { effects: "read" } },
+      });
+    });
+
+    it("loads no project declaration when the project scope is withheld", () => {
+      writeGlobal({ commandEffects: { strings: { effects: "read" } } });
+      writeProject({ commandEffects: { rm: { effects: [] } } });
+      writeLegacyProjectPolicy({ commandEffects: { mv: { effects: [] } } });
+
+      const result = loadAndMergeConfigs(agentDir, cwd, extensionRoot, {
+        includeProjectScope: false,
+      });
+
+      expect(result.declaredCommandEffects).toEqual({
+        strings: { scope: "global", entry: { effects: "read" } },
+      });
+    });
+
+    it("keeps declarations out of the merged config, which holds no scope", () => {
+      writeGlobal({ commandEffects: { strings: { effects: "read" } } });
+
+      const result = loadAndMergeConfigs(agentDir, cwd, extensionRoot);
+
+      expect(result.merged).toEqual({});
     });
   });
 

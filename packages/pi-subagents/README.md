@@ -403,6 +403,7 @@ Pass `claimOutcome: true` to declare that your extension is delivering it, which
 
 Pass `signal` to cancel the resumed turn loop.
 It is wired through the record's own lever, so it ends the resume exactly as `abort(id)` does — either cancel reaches the same run, and the record reads `stopped`.
+A signal that has already fired stops the resume before its first turn.
 
 ### `@gotgenes/pi-subagents/settings` — layered config loader
 

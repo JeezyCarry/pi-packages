@@ -142,6 +142,7 @@ export function describeBashPathGate(
     agentName: tcc.agentName,
     matchedPattern: worstCheck.matchedPattern,
     surface,
+    decidingEffect: worstEntry.effect,
   });
 
   return {
@@ -164,10 +165,6 @@ export function describeBashPathGate(
       agentName: tcc.agentName,
       command,
       path: worstToken,
-      // The blame line ADR 0013 §7 asks for: `request.surface` already records
-      // the direction, and these two record what established it.
-      effect: worstEntry.effect.effect,
-      effectSource: worstEntry.effect.source,
     },
     decision: {
       surface,

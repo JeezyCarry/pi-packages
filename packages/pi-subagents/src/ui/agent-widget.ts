@@ -9,6 +9,7 @@ import type { TuiMode } from "@earendil-works/pi-tui";
 import { AgentTypeRegistry } from "#src/config/agent-types";
 import type { Subagent } from "#src/lifecycle/subagent";
 import type { SubagentManager, SubagentManagerObserver } from "#src/lifecycle/subagent-manager";
+import type { RunKind } from "#src/lifecycle/subagent-run";
 import type { CompactionInfo } from "#src/types";
 import { ERROR_STATUSES, type Theme } from "#src/ui/display";
 import { renderWidgetLines, type WidgetAgent } from "#src/ui/widget-renderer";
@@ -145,8 +146,8 @@ export class AgentWidget implements SubagentManagerObserver {
 
   // ---- SubagentManagerObserver: react to lifecycle, self-drive the timer ----
 
-  /** A subagent started running — render, which arms the animation loop. */
-  onSubagentStarted(_record: Subagent) {
+  /** A run started, initial or resumed — render, which (re-)arms the animation loop. */
+  onSubagentRunStarted(_record: Subagent, _kind: RunKind) {
     this.update();
   }
 
@@ -155,18 +156,8 @@ export class AgentWidget implements SubagentManagerObserver {
     this.update();
   }
 
-  /** A subagent completed — render so the finished state is seeded and shown. */
-  onSubagentCompleted(_record: Subagent) {
-    this.update();
-  }
-
-  /** A subagent went back to running — render, which re-arms the animation loop. */
-  onSubagentResuming(_record: Subagent) {
-    this.update();
-  }
-
-  /** A subagent finished a resume — render so the refreshed result is shown. */
-  onSubagentResumed(_record: Subagent) {
+  /** A run finished — render so the finished state is seeded and the refreshed result shown. */
+  onSubagentRunFinished(_record: Subagent, _kind: RunKind) {
     this.update();
   }
 
