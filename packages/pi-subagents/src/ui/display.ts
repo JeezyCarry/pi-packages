@@ -146,7 +146,7 @@ export function formatRunDuration(run: RunTiming): string {
 }
 
 /** Format duration from start/completed timestamps. */
-export function formatDuration(startedAt: number, completedAt?: number): string {
+function formatDuration(startedAt: number, completedAt?: number): string {
   if (completedAt) return formatMs(completedAt - startedAt);
   return `${formatMs(Date.now() - startedAt)} (running)`;
 }
