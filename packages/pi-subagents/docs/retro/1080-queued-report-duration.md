@@ -46,6 +46,19 @@ The pi-subagents suite went from 2179 to 2183 tests (+4); `check`, root lint, an
 - Pre-completion reviewer: PASS.
   Its evidence-provenance section noted that the plan's scenario table comes from a seeded spike with n=1; the plan already labels it that way.
 
+## Stage: Sync (worktree) (2026-10-24T15:42:34Z)
+
+### Session summary
+
+Pre-push `pnpm run lint` and `pnpm fallow dead-code` passed from the worktree root.
+The plan's marker is `**Release:** ship independently`, with one `fix(pi-subagents):` commit (a patch); [#1085] (the session navigator's label for a queued resume) is filed and recorded as the next Phase 23 step, so it is not part of this land.
+
+**Peer session transcript:** `/Users/chris/.pi/agent/sessions/--Users-chris-development-pi-pi-packages-worktrees-issue-1080--/2026-10-18T16-30-57-891Z_01a14fda-2162-7490-b648-27128e6a4b9f.jsonl` — read with `read_session_file({ path: "<path>" })` for message-level verification at land/retro time.
+
+### Observations
+
+- The TDD stage's pre-completion review was PASS with no open WARN, so nothing is carried to `/ship`.
+
 [#947]: https://github.com/gotgenes/pi-packages/issues/947
 [#1079]: https://github.com/gotgenes/pi-packages/issues/1079
 [#1085]: https://github.com/gotgenes/pi-packages/issues/1085
