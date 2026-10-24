@@ -23,5 +23,23 @@ The plan is a `refactor:` move, a `fix:` for the label, and the roadmap landing;
 - The still-running `(running)` arm of `formatDuration` has no test today; Step 1's unit tests add one.
 - The spike's in-memory released row came back unlisted because the stub session has no `outputFile`, so that row is pinned by a `makeNavigable` fixture only.
 
+## Stage: Implementation — TDD (2026-10-24T17:05:01Z)
+
+### Session summary
+
+All three plan steps landed: the `refactor(pi-subagents)` move of `formatRunDuration` into `src/ui/display.ts` with four unit tests, the `fix(pi-subagents)` navigator label with four tests, and the roadmap landing (the check mark on the heading and the `S1085` node, plus a `Landed:` note).
+The pi-subagents suite went from 2183 to 2191 tests (+8); `check`, root lint, and `fallow dead-code` stayed green.
+
+### Observations
+
+- Deviation: the plan made `formatDuration` private in Step 1, but `session-navigation.ts` still imported it there.
+  Switching the navigator early would have changed the queued label inside a `refactor:` commit, so Step 1 kept the export and Step 2 (the `fix:`) made it private; both commit bodies say so.
+  The planning miss was a Module-Level Changes entry that listed the export removal without re-checking the step that still had a caller.
+- Red came up exactly as predicted: three navigator tests failed, and the persisted-row pin passed.
+- Every planned killing mutation turned the predicted tests red.
+  Step 2's first mutation was applied as `formatRunDuration({ ...fields, status: "running", stoppedWhileQueued: false })` rather than re-exporting `formatDuration`; it reproduces the old rendering without reopening the export.
+  The persisted-loop mutation (`stoppedWhileQueued: true`) also reddened three existing persisted-row tests in `session-navigation.test.ts` and `session-navigator.test.ts`, which is consistent: it mislabels every persisted run, not only the stopped one.
+- Pre-completion reviewer: PASS.
+
 [#1080]: https://github.com/gotgenes/pi-packages/issues/1080
 [#1086]: https://github.com/gotgenes/pi-packages/issues/1086
