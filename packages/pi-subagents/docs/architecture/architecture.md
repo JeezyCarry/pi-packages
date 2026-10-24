@@ -964,6 +964,8 @@ End-of-planning `src/` totals: 12,420 LOC across 73 files, 2,065 tests across 85
   The same report's `Duration` stat reads a queued run's time since spawn as `(running)`; [#1079] fixes the body and the bounded-wait note and leaves the stat to this step.
 - [#1085] — filed by [#1080]'s planning; becomes a new step after [#1080] (operator decision).
   The `/subagents:sessions` navigator label reads a queued resume's time in the queue as `(running)` through the shared `formatDuration`, which [#1080] leaves alone by fixing the report at its call site.
+- [#1086] — filed by [#1085]'s planning; becomes a new step after [#1085] (operator decision).
+  After a `/reload`, a resume stopped while queued is labeled from its `subagents:record` entry, which does not record `stoppedWhileQueued`, so the persisted row still reads its queue time as the run's duration; [#1085] fixes the in-memory entries and leaves this row.
 
 #### Deferred tidyings swept
 
@@ -1181,6 +1183,20 @@ Release: independent
 
 Release: independent
 
+#### [#1086] A reloaded resume stopped while queued does not label its wait as its duration
+
+**Cause:** the `subagents:record` entry does not record whether a run was stopped while queued.
+`readPersistedRuns` returns a `PersistedRunSummary` without `stoppedWhileQueued`, so `buildLabel` renders a persisted resume stopped while queued as `stopped · 3.0s · session released (snapshot)`.
+
+- **Smell:** Category C (a status a carrier's label does not distinguish).
+- **Target:** `src/persisted-record.ts` (`PersistedSubagentRecord`, `PersistedRunSummary`, `toPersistedRecord`, `asRunSummary`), the persisted-runs call site in `src/ui/session-navigation.ts` (`listNavigableAgents`), and their tests.
+- **Soft dependency:** [#1085] — the navigator label learns the queue-time rendering first.
+- **Outcome:** a persisted resume stopped while queued is labeled with its time in the queue, and an entry written before the field existed reads as not stopped while queued; pinned.
+- **Commit type:** `fix:`.
+- **Impact 1 / Risk 1 / Priority 5.**
+
+Release: independent
+
 #### ✅ [#912] Let a consumer ask whether an agent is resumable
 
 **Cause:** the query surface cannot report a decision the core already makes.
@@ -1231,6 +1247,7 @@ flowchart TD
     S1013 -.soft.-> S1079["✅ #1079<br/>Queued report body"]
     S1079 -.soft.-> S1080["✅ #1080<br/>Queued report duration"]
     S1080 -.soft.-> S1085["#1085<br/>Queued navigator label"]
+    S1085 -.soft.-> S1086["#1086<br/>Persisted queued label"]
     S1017["#1017<br/>Drop pre-0.86 arms"]
 ```
 
@@ -1249,8 +1266,8 @@ Every Track A step rewrites `lifecycle/subagent.ts`, so those steps sequence rat
 
 ### Release batches
 
-- Independently releasable: [#947], [#1048], [#1049], [#1050], [#1012], [#1051], [#1013], [#1079], [#1080], [#1085], [#912], [#1017].
-- Release vehicles: [#947] (`feat:` or `fix:`, decided at plan time), [#1049] (`fix:` for [#949]), [#1050] (`fix:` for the resume's workspace rule), [#1012] (`fix!:`), [#1051] (`fix:` for a stopped run's late result landing on its resume), [#1013] (`fix!:` for the `resume-queued` refusal), [#1079] (`fix:`), [#1080] (`fix:`), [#1085] (`fix:`), [#912] (`feat:`), and [#1017] (`docs:` for the configuration note).
+- Independently releasable: [#947], [#1048], [#1049], [#1050], [#1012], [#1051], [#1013], [#1079], [#1080], [#1085], [#1086], [#912], [#1017].
+- Release vehicles: [#947] (`feat:` or `fix:`, decided at plan time), [#1049] (`fix:` for [#949]), [#1050] (`fix:` for the resume's workspace rule), [#1012] (`fix!:`), [#1051] (`fix:` for a stopped run's late result landing on its resume), [#1013] (`fix!:` for the `resume-queued` refusal), [#1079] (`fix:`), [#1080] (`fix:`), [#1085] (`fix:`), [#1086] (`fix:`), [#912] (`feat:`), and [#1017] (`docs:` for the configuration note).
   [#1048] is `refactor:` only and cuts no release on its own.
 - No batches: every step leaves the package releasable, and the refactoring steps preserve behavior.
 
@@ -1395,5 +1412,6 @@ The upstream test suite is run periodically as a regression canary for the sessi
 [#1079]: https://github.com/gotgenes/pi-packages/issues/1079
 [#1080]: https://github.com/gotgenes/pi-packages/issues/1080
 [#1085]: https://github.com/gotgenes/pi-packages/issues/1085
+[#1086]: https://github.com/gotgenes/pi-packages/issues/1086
 [ADR-0002]: ../decisions/0002-extensions-on-a-minimal-core.md
 [ADR-0004]: ../decisions/0004-reconsider-ui-direction.md
