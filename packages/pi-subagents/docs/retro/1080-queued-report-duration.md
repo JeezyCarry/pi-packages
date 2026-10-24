@@ -59,6 +59,46 @@ The plan's marker is `**Release:** ship independently`, with one `fix(pi-subagen
 
 - The TDD stage's pre-completion review was PASS with no open WARN, so nothing is carried to `/ship`.
 
+## Stage: Final Retrospective (2026-10-24T15:51:35Z)
+
+### Session summary
+
+The worktree lane ran end to end with no rework: plan, TDD, and sync in the peer session, then a fast-forward land, green CI, the #1080 close, and the `pi-subagents-v25.0.2` release at the root.
+The fix adds a private `formatRunDuration` helper in `src/tools/get-result-tool.ts`, so a queued or stopped-while-queued agent reads `Duration: queued <seconds>`.
+The sibling defect in `/subagents:sessions` is filed as [#1085] and queued as the next Phase 23 step.
+
+### Observations
+
+#### What went well
+
+- The planning spike drove `GetResultTool.execute` against a real gated scheduler and surfaced the stopped-while-queued case the issue omits, before the design gate rather than after it.
+- The TDD stage applied five planned killing mutations plus one unplanned control (reverting only the report-site call), each restored from a `/tmp/green.ts` copy with `diff -q` confirming the restore; no mutation leaked into a commit.
+- The ship ran on its happy path: `merge-base --is-ancestor` predicted the fast-forward, both root gates passed on the merged tree, and the release needed no re-dispatch.
+
+#### What caused friction (agent side)
+
+- `missing-context` — the first draft of [#1085], and the planning gate's Non-Goals note, named the navigator command `/agents` from memory; a `registerCommand` grep after filing showed it is `/subagents:sessions`.
+  Self-identified.
+  Impact: one `gh issue edit` of the title and body; caught before the roadmap disposition recorded it.
+- `other` — the spike first stopped the queued run with `abort()`, which leaves it queued; `stopQueued()` is the queued-run lever.
+  Impact: one extra spike run.
+- `other` — the sync stage spent two calls on the transcript path: the prompt's `ls -t` session-directory recipe, then `PI_SESSION_FILE` to confirm the newest file was the live one.
+  Impact: one extra tool call, no rework.
+
+#### What caused friction (user side)
+
+- None observed; the operator's involvement was the two rendering gates in planning and the #1085 disposition, all strategic decisions.
+
+### Diagnostic details
+
+- **Model-performance correlation** — planning and TDD ran on `anthropic/claude-opus-5-5`, sync on `anthropic/claude-sonnet-5-5`; both subagents (`tidy-first-assessor`, `pre-completion-reviewer`) ran on `anthropic/claude-sonnet-5-5` per their own transcripts.
+  The split fits the work: judgment-heavy design on the stronger model, mechanical sync and checklist review on the cheaper one.
+- **Feedback-loop gap analysis** — verification was incremental: baseline gates before Red, a targeted `vitest run -t "Duration stat"` after each mutation, package `check` before the `fix:` commit, and the full gates before review.
+
+### Changes made
+
+1. `.pi/prompts/sync-worktree.md` step 2: replaced the `ls -t` session-directory recipe and its stall caveat with `echo "$PI_SESSION_FILE"`, which Pi's bash tool sets from the session manager; an empty result falls back to the root's `list_session_files`.
+
 [#947]: https://github.com/gotgenes/pi-packages/issues/947
 [#1079]: https://github.com/gotgenes/pi-packages/issues/1079
 [#1085]: https://github.com/gotgenes/pi-packages/issues/1085
