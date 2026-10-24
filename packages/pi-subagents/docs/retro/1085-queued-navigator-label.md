@@ -41,5 +41,18 @@ The pi-subagents suite went from 2183 to 2191 tests (+8); `check`, root lint, an
   The persisted-loop mutation (`stoppedWhileQueued: true`) also reddened three existing persisted-row tests in `session-navigation.test.ts` and `session-navigator.test.ts`, which is consistent: it mislabels every persisted run, not only the stopped one.
 - Pre-completion reviewer: PASS.
 
+## Stage: Sync (worktree) (2026-10-24T17:09:36Z)
+
+### Session summary
+
+Pre-push `pnpm run lint` and `pnpm fallow dead-code` passed from the worktree root.
+The plan's marker is `**Release:** ship independently`, with one `fix(pi-subagents):` commit (a patch) beside a `refactor:` move that cuts no release of its own; [#1086] (the persisted row) is filed and recorded as the next Phase 23 step, so it is not part of this land.
+
+**Peer session transcript:** `/Users/chris/.pi/agent/sessions/--Users-chris-development-pi-pi-packages-worktrees-issue-1085--/2026-10-24T16-06-25-566Z_01a16ea9-d21d-77b2-a6f5-bbaffc50c58b.jsonl` — read with `read_session_file({ path: "<path>" })` for message-level verification at land/retro time.
+
+### Observations
+
+- The TDD stage's pre-completion review was PASS with no open WARN, so nothing is carried to `/ship`.
+
 [#1080]: https://github.com/gotgenes/pi-packages/issues/1080
 [#1086]: https://github.com/gotgenes/pi-packages/issues/1086
