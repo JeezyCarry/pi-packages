@@ -28,5 +28,24 @@ The plan is one `fix:` step plus the roadmap landing step; the `/subagents:sessi
 
 - `src/tools/get-result-tool.ts`: `buildReport` and `buildGetResultDetails` still compute about eight fields identically; this is already recorded under [#947]'s deferred tidyings.
 
+## Stage: Implementation — TDD (2026-10-24T15:24:14Z)
+
+### Session summary
+
+Both plan steps landed: the `fix(pi-subagents)` commit adding `formatRunDuration` (called from `buildReport` and `buildGetResultDetails`) with four tests, and the roadmap landing (`✅` on the heading and the `S1080` node, widened `Outcome:`, `Landed:` note).
+The pi-subagents suite went from 2179 to 2183 tests (+4); `check`, root lint, and `fallow dead-code` stayed green.
+
+### Observations
+
+- No deviations from the plan; the `get-result-report.test.ts` fixture string was updated in the fix commit as planned.
+- Red came up exactly as predicted: the three queued and stopped-while-queued tests failed, and the started-run control passed.
+- Every planned killing mutation turned exactly the predicted tests red.
+  The `condition true` mutation was applied as the compared literal `status !== "error"` (true for every fixture status), which avoids Biome's `noConstantCondition` noise that [#1079]'s TDD stage hit.
+  An extra mutation that reverted only the report-site call turned the two report-text assertions red, so each relocated call site is pinned separately.
+- The `Duration stat` tests reuse `queuedAgent()` under fake timers at `vi.setSystemTime(6_000)`, which works with the fixture's default `startedAt` of `1000`; no fixture change was needed.
+- Pre-completion reviewer: PASS.
+  Its evidence-provenance section noted that the plan's scenario table comes from a seeded spike with n=1; the plan already labels it that way.
+
 [#947]: https://github.com/gotgenes/pi-packages/issues/947
+[#1079]: https://github.com/gotgenes/pi-packages/issues/1079
 [#1085]: https://github.com/gotgenes/pi-packages/issues/1085
