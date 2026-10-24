@@ -1149,7 +1149,7 @@ The report's `Duration` stat is [#1080]'s.
 
 Release: independent
 
-#### [#1080] A queued agent's report does not call its wait running time
+#### ✅ [#1080] A queued agent's report does not call its wait running time
 
 **Cause:** the report's `Duration` stat does not distinguish a run waiting on a concurrency slot from a running one.
 `GetResultTool.buildReport` renders it with `formatDuration(startedAt, completedAt)`, which appends `(running)` whenever `completedAt` is unset, and a run's `startedAt` is its construction time until the limiter admits it.
@@ -1157,9 +1157,13 @@ Release: independent
 - **Smell:** Category C (a status a carrier's stat does not distinguish).
 - **Target:** `src/tools/get-result-tool.ts` (`buildReport`, `buildGetResultDetails`) and its tests; `formatDuration` in `src/ui/display.ts` is shared, so the call site is the likelier home.
 - **Soft dependency:** [#1079] — the same report's body and bounded-wait note learn the queued state first.
-- **Outcome:** a queued agent's report does not label its time in the queue as running time; pinned.
+- **Outcome:** a queued agent's report, and that of a run stopped while queued, does not label its time in the queue as running time; pinned.
 - **Commit type:** `fix:`.
 - **Impact 1 / Risk 1 / Priority 5.**
+
+Landed: `get_subagent_result` renders the `Duration` stat of a run the limiter never admitted as its time in the queue, `queued 5.0s`, in the report text and the TUI details alike.
+A run still queued reads its time since it was enqueued; a run stopped while queued keeps the time it waited, frozen at the stop.
+The decision lives in `formatRunDuration` (`src/tools/get-result-tool.ts`), which both report builders call; the shared `formatDuration` is unchanged, and the session navigator's label, its other caller, is [#1085]'s.
 
 Release: independent
 
@@ -1225,7 +1229,7 @@ flowchart TD
     S1051 -.soft.-> S1013
     S1012 -.soft.-> S1013
     S1013 -.soft.-> S1079["✅ #1079<br/>Queued report body"]
-    S1079 -.soft.-> S1080["#1080<br/>Queued report duration"]
+    S1079 -.soft.-> S1080["✅ #1080<br/>Queued report duration"]
     S1080 -.soft.-> S1085["#1085<br/>Queued navigator label"]
     S1017["#1017<br/>Drop pre-0.86 arms"]
 ```
