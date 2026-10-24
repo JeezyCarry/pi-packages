@@ -15,8 +15,8 @@ import type { Subagent } from "#src/types";
 import { BoundedLines } from "#src/ui/bounded-lines";
 import {
 	describeActivity,
-	formatDuration,
 	formatMs,
+	formatRunDuration,
 	getDisplayName,
 	modelLabel,
 	type Theme,
@@ -322,18 +322,6 @@ function progressOf(record: Subagent): AgentReport["progress"] {
 		turns: record.turnBudget?.used,
 		sinceLastProgress: formatMs(Date.now() - record.lastProgressAt),
 	};
-}
-
-/**
- * A started run's duration; for a run the limiter never admitted, its time in
- * the queue, so the stat never calls waiting for a slot running time. A run
- * stopped while queued keeps the time it waited, frozen at the stop.
- */
-function formatRunDuration(outcome: RunOutcome): string {
-	if (outcome.status === "queued" || outcome.stoppedWhileQueued) {
-		return `queued ${formatMs((outcome.completedAt ?? Date.now()) - outcome.startedAt)}`;
-	}
-	return formatDuration(outcome.startedAt, outcome.completedAt);
 }
 
 /** The first non-empty line of a result body, clipped to the preview budget. */
