@@ -309,13 +309,13 @@ describe("formatAgentReport", () => {
 				makeReport({
 					status: "queued",
 					result: undefined,
-					duration: "130.0s (running)",
+					duration: "queued 130.0s",
 					waitExpiredAfter: 120,
 				}),
 			);
 			expect(text).toBe(
 				"Agent: agent-1\n" +
-					"Type: General | Status: queued | Tool uses: 3 | Duration: 130.0s (running)\n" +
+					"Type: General | Status: queued | Tool uses: 3 | Duration: queued 130.0s\n" +
 					"Description: Investigate the bug\n\n" +
 					"Agent is queued and has not started; it is waiting for a concurrency slot (maxConcurrent). " +
 					"Use wait: true or check back later.\n\n" +

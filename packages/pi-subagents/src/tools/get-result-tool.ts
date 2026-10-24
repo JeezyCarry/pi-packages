@@ -143,7 +143,7 @@ export class GetResultTool {
 			tokens: formatLifetimeTokens(record),
 			contextPercent: record.getContextPercent(),
 			compactionCount: record.compactionCount,
-			duration: formatDuration(outcome.startedAt, outcome.completedAt),
+			duration: formatRunDuration(outcome),
 			description: record.description,
 			result: outcome.result,
 			error: outcome.error,
@@ -180,7 +180,7 @@ export class GetResultTool {
 			tokens: formatLifetimeTokens(record),
 			contextPercent: record.getContextPercent(),
 			compactionCount: record.compactionCount,
-			duration: formatDuration(outcome.startedAt, outcome.completedAt),
+			duration: formatRunDuration(outcome),
 			preview: buildPreview(outcome.result),
 			error: outcome.error,
 			turnBudget: outcome.turnBudget,
@@ -322,6 +322,18 @@ function progressOf(record: Subagent): AgentReport["progress"] {
 		turns: record.turnBudget?.used,
 		sinceLastProgress: formatMs(Date.now() - record.lastProgressAt),
 	};
+}
+
+/**
+ * A started run's duration; for a run the limiter never admitted, its time in
+ * the queue, so the stat never calls waiting for a slot running time. A run
+ * stopped while queued keeps the time it waited, frozen at the stop.
+ */
+function formatRunDuration(outcome: RunOutcome): string {
+	if (outcome.status === "queued" || outcome.stoppedWhileQueued) {
+		return `queued ${formatMs((outcome.completedAt ?? Date.now()) - outcome.startedAt)}`;
+	}
+	return formatDuration(outcome.startedAt, outcome.completedAt);
 }
 
 /** The first non-empty line of a result body, clipped to the preview budget. */

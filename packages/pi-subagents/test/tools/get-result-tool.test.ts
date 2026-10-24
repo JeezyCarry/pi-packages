@@ -299,6 +299,55 @@ describe("GetResultTool", () => {
 			expect(text).not.toContain("No output.");
 			expect(record.consumed).toBe(false);
 		});
+
+		describe("Duration stat", () => {
+			// queuedAgent() and createTestSubagent() start the run at 1000, so 6_000 is 5 s later.
+			beforeEach(() => {
+				vi.useFakeTimers();
+				vi.setSystemTime(6_000);
+			});
+
+			afterEach(() => {
+				vi.useRealTimers();
+			});
+
+			it("reports its time in the queue instead of a running duration", async () => {
+				const { manager } = queuedAgent();
+
+				const text = textOf(await execute(manager, { agent_id: "agent-1" }));
+
+				expect(text).toContain("| Duration: queued 5.0s\n");
+				expect(text).not.toContain("(running)");
+			});
+
+			it("carries its time in the queue in the TUI details", async () => {
+				const { manager } = queuedAgent();
+
+				const result = await execute(manager, { agent_id: "agent-1" });
+
+				expect(result.details?.duration).toBe("queued 5.0s");
+			});
+
+			it("keeps the time a run stopped while queued spent in the queue, frozen at the stop", async () => {
+				const { record, manager } = queuedAgent();
+				record.stopQueued();
+				vi.setSystemTime(9_000);
+
+				const result = await execute(manager, { agent_id: "agent-1" });
+
+				expect(textOf(result)).toContain("| Duration: queued 5.0s\n");
+				expect(result.details?.duration).toBe("queued 5.0s");
+			});
+
+			it("leaves a started run's duration as its running time", async () => {
+				const records = new Map([["agent-1", createTestSubagent()]]);
+
+				const result = await execute(makeManager(records), { agent_id: "agent-1" });
+
+				expect(textOf(result)).toContain("| Duration: 1.0s\n");
+				expect(result.details?.duration).toBe("1.0s");
+			});
+		});
 	});
 
 	describe("model", () => {
