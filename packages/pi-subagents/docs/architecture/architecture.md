@@ -1169,7 +1169,7 @@ The decision lives in `formatRunDuration` (`src/tools/get-result-tool.ts`), whic
 
 Release: independent
 
-#### [#1085] A queued resume's navigator label does not call its wait running time
+#### ✅ [#1085] A queued resume's navigator label does not call its wait running time
 
 **Cause:** the session navigator's label does not distinguish a run waiting on a concurrency slot from a running one.
 `buildLabel` (`src/ui/session-navigation.ts`) renders it with `formatDuration(startedAt, completedAt)`, and a queued resume keeps its prior session, so `listNavigableAgents` lists it as a live entry labeled `queued · 3.0s (running)`.
@@ -1180,6 +1180,10 @@ Release: independent
 - **Outcome:** a queued resume's navigator label does not present its time in the queue as running time; pinned.
 - **Commit type:** `fix:`.
 - **Impact 1 / Risk 1 / Priority 5.**
+
+Landed: the `/subagents:sessions` picker labels a queued resume `queued · queued <seconds>` and a resume stopped while queued `stopped · queued <seconds>`, live or released in memory, in the wording `get_subagent_result` uses.
+`formatRunDuration` now lives in `src/ui/display.ts` over a narrow `RunTiming`, shared by both report builders and `buildLabel`, and `formatDuration` is private to it.
+A run labeled from its persisted `subagents:record` entry still reads as one that started; that row is [#1086]'s.
 
 Release: independent
 
@@ -1246,7 +1250,7 @@ flowchart TD
     S1012 -.soft.-> S1013
     S1013 -.soft.-> S1079["✅ #1079<br/>Queued report body"]
     S1079 -.soft.-> S1080["✅ #1080<br/>Queued report duration"]
-    S1080 -.soft.-> S1085["#1085<br/>Queued navigator label"]
+    S1080 -.soft.-> S1085["✅ #1085<br/>Queued navigator label"]
     S1085 -.soft.-> S1086["#1086<br/>Persisted queued label"]
     S1017["#1017<br/>Drop pre-0.86 arms"]
 ```
