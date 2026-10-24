@@ -54,5 +54,54 @@ The plan's marker is `**Release:** ship independently`, with one `fix(pi-subagen
 
 - The TDD stage's pre-completion review was PASS with no open WARN, so nothing is carried to `/ship`.
 
+## Stage: Final Retrospective (2026-10-24T17:18:22Z)
+
+### Session summary
+
+The root session fast-forward-merged the peer branch, re-ran root lint and `fallow dead-code` on the merged tree, pushed, and saw CI pass on the pushed commit.
+It closed #1085 with a comment anchored on the `fix(pi-subagents)` commit and released `pi-subagents-v25.0.3`, the only package in range, then tore down the worktree.
+Across planning, TDD, sync, and ship the issue landed with no rework commits, and no stage needed an operator decision beyond the two planning gates (wording, and the #1086 disposition).
+
+### Observations
+
+#### What went well
+
+- The planning spike drove a real `Subagent` through `resume()` behind a `gatedScheduler` and labeled it with the real `listNavigableAgents`, rather than a hand-built `NavigableSubagent`.
+  That surfaced the persisted post-`/reload` row the issue never mentioned, which became [#1086] and was dispositioned against Phase 23 before the plan was written.
+- Every TDD step ran its planned killing mutations with a `cp` backup and a `diff -q` restore check, and each mutation turned exactly the predicted tests red.
+
+#### What caused friction (agent side)
+
+- `instruction-violation` — the plan's Module-Level Changes made `formatDuration` private in Step 1 while `session-navigation.ts` still imported it until Step 2.
+  `.pi/prompts/plan-issue.md` already says that a step removing an export breaks every importer in that commit, so the plan should have put the removal in the step that drops the last importer.
+  The implementer caught it (self-identified, at implementation): it kept the export in the `refactor:` commit and removed it in the `fix:` commit, and both commit bodies say so.
+  Impact: one documented deviation from the plan, no rework.
+- `instruction-violation` — the peer hit two `pi-permission-system` deny rules that `AGENTS.md` names: `cd packages/pi-subagents` in planning, and `git commit -F -` with a heredoc in TDD.
+  Both were self-corrected on the next call, guided by the rule's reason string.
+  Impact: one wasted call each, which is the mechanism working as designed.
+- `other` — the TDD stage-note commit hit the 60-second bash timeout once; the agent checked for a stale `index.lock`, found none, and the retried commit landed.
+  Impact: three extra calls, no rework.
+- `other` — the ship's pre-push gate call carried a stray `[ $? ] ; tail … | head -0` fragment that printed a `head` error.
+  Both gates had already reported exit 0 through their own `echo`, so the error was noise.
+  Impact: none.
+
+#### What caused friction (user side)
+
+- None observed.
+  The operator's involvement was the two planning gates, both strategic: the wording choice and the #1086 deferral.
+
+### Diagnostic details
+
+- **Model-performance correlation** — planning and TDD ran on `claude-opus-5-5` (high thinking), while sync and ship ran on `claude-sonnet-5-5`, which suits mechanical git/CI steps.
+  The `tidy-first-assessor` (5 turns) and `pre-completion-reviewer` (9 turns) both ran on `claude-sonnet-5-5`, per their own transcripts.
+  No mismatch.
+- **Feedback-loop gap analysis** — TDD ran a baseline `check`/`lint`/`fallow`/`test` sweep before Step 1, targeted Vitest runs plus `check` after each Green, and the full suite, root lint, and `fallow dead-code` before the `fix:` commit.
+  Nothing was deferred to the end.
+
+### Changes made
+
+1. `packages/pi-subagents/docs/retro/1085-queued-navigator-label.md` gets this entry, and nothing else changed.
+   The operator declined repeating the export-removal rule in `.pi/prompts/plan-issue.md`, because the rule already exists there and the miss cost no rework.
+
 [#1080]: https://github.com/gotgenes/pi-packages/issues/1080
 [#1086]: https://github.com/gotgenes/pi-packages/issues/1086
