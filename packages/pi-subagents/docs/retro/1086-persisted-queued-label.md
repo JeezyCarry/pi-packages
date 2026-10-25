@@ -43,3 +43,18 @@ The pi-subagents suite went from 2191 to 2196 tests (+5); `check`, root lint, th
 - The commit hit the `git commit -F -` heredoc deny rule once; it was resolved by writing the message to a file.
 - Pre-completion reviewer: WARN.
   Reviewer warnings: the non-boolean skip test covers only `"yes"`; `null` takes the same branch, so a `null` case would be a cheap extra pin (optional, non-blocking).
+
+## Stage: Sync (worktree) (2026-10-25T00:16:27Z)
+
+### Session summary
+
+Pre-push `pnpm run lint` and `pnpm fallow dead-code` passed from the worktree root.
+The plan's marker is `**Release:** ship independently`, with one `fix(pi-subagents):` commit (a patch); the plan names no follow-up issues.
+
+**Peer session transcript:** `/Users/chris/.pi/agent/sessions/--Users-chris-development-pi-pi-packages-worktrees-issue-1086--/2026-10-24T23-44-08-201Z_01a1704c-de08-7690-8b56-99d0a7f363b2.jsonl`; read it with `read_session_file({ path: "<path>" })` for message-level verification at land/retro time.
+
+### Observations
+
+- The TDD stage's reviewer WARN was settled here by operator decision (add): the commit `test(pi-subagents): pin null and 0 as skipped stoppedWhileQueued values (#1086)` makes the skip test an `it.each` over `"yes"`, `null`, and `0`.
+  Deleting the guard turned all three cases red; this test-only commit was not re-reviewed by the pre-completion reviewer.
+- The first `ask_user` attempts were rejected for missing visible substance; the gate was then put in plain text.
