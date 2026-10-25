@@ -1187,7 +1187,7 @@ A run labeled from its persisted `subagents:record` entry still reads as one tha
 
 Release: independent
 
-#### [#1086] A reloaded resume stopped while queued does not label its wait as its duration
+#### ✅ [#1086] A reloaded resume stopped while queued does not label its wait as its duration
 
 **Cause:** the `subagents:record` entry does not record whether a run was stopped while queued.
 `readPersistedRuns` returns a `PersistedRunSummary` without `stoppedWhileQueued`, so `buildLabel` renders a persisted resume stopped while queued as `stopped · 3.0s · session released (snapshot)`.
@@ -1198,6 +1198,9 @@ Release: independent
 - **Outcome:** a persisted resume stopped while queued is labeled with its time in the queue, and an entry written before the field existed reads as not stopped while queued; pinned.
 - **Commit type:** `fix:`.
 - **Impact 1 / Risk 1 / Priority 5.**
+
+Landed: the `subagents:record` entry records `stoppedWhileQueued`, copied by `toPersistedRecord` and validated by `asRunSummary`, so after a `/reload` the `/subagents:sessions` row of a resume stopped while queued reads `stopped · queued <seconds> · session released (snapshot)`, like its in-memory row.
+An entry written before the field existed reads as not stopped while queued and keeps its label, and `listNavigableAgents` passes each persisted run to `buildLabel` unadapted.
 
 Release: independent
 
@@ -1251,7 +1254,7 @@ flowchart TD
     S1013 -.soft.-> S1079["✅ #1079<br/>Queued report body"]
     S1079 -.soft.-> S1080["✅ #1080<br/>Queued report duration"]
     S1080 -.soft.-> S1085["✅ #1085<br/>Queued navigator label"]
-    S1085 -.soft.-> S1086["#1086<br/>Persisted queued label"]
+    S1085 -.soft.-> S1086["✅ #1086<br/>Persisted queued label"]
     S1017["#1017<br/>Drop pre-0.86 arms"]
 ```
 
