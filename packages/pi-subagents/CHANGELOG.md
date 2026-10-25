@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [25.0.4](https://github.com/gotgenes/pi-packages/compare/pi-subagents-v25.0.3...pi-subagents-v25.0.4) (2026-10-25)
+
+
+### Bug Fixes
+
+* **pi-subagents:** label a reloaded resume stopped while queued with its time in the queue ([#1086](https://github.com/gotgenes/pi-packages/issues/1086)) ([473e97d](https://github.com/gotgenes/pi-packages/commit/473e97de6f257ac00a6dc79a69941fa6656e4529)), closes [#1086](https://github.com/gotgenes/pi-packages/issues/1086)
+
 ## [25.0.3](https://github.com/gotgenes/pi-packages/compare/pi-subagents-v25.0.2...pi-subagents-v25.0.3) (2026-10-24)
 
 
