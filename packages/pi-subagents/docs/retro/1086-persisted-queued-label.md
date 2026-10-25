@@ -27,3 +27,19 @@ The roadmap step is `Release: independent`, so the plan ships independently.
 
 - `src/persisted-record.ts` — a shared optional-field guard in `asRunSummary`, rejected as a wrong abstraction (the new guard normalizes absence, the others pass `undefined` through).
 - `test/persisted-record.test.ts`, `test/ui/session-navigation.test.ts`, `test/ui/session-navigator.test.ts` — three independent persisted-run fixtures of different shapes; unifying them is unrelated cleanup.
+
+## Stage: Implementation — TDD (2026-10-25T00:04:41Z)
+
+### Session summary
+
+Both plan steps landed: the `fix(pi-subagents)` commit that records `stoppedWhileQueued` on the `subagents:record` entry, validates it in `asRunSummary`, and drops the `listNavigableAgents` adapter; and the `docs(pi-subagents)` roadmap landing (the check mark on the heading and the `S1086` node, plus a `Landed:` note).
+The pi-subagents suite went from 2191 to 2196 tests (+5); `check`, root lint, the full repo test run, and `fallow dead-code` stayed green.
+
+### Observations
+
+- No deviations from the plan; the changed files match Module-Level Changes exactly.
+- Red came up as predicted: 13 failing tests across the four files, all from the new field.
+- Every planned killing mutation turned exactly the predicted tests red: writer (5), reader value (2), absent arm read as `true` (3: the legacy unit test and both legacy raw-entry navigator tests), guard removed (1), adapter restored (2).
+- The commit hit the `git commit -F -` heredoc deny rule once; it was resolved by writing the message to a file.
+- Pre-completion reviewer: WARN.
+  Reviewer warnings: the non-boolean skip test covers only `"yes"`; `null` takes the same branch, so a `null` case would be a cheap extra pin (optional, non-blocking).
