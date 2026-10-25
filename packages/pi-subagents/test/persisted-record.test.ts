@@ -120,8 +120,8 @@ describe("readPersistedRuns", () => {
 			expect(readPersistedRuns([recordEntry(preUpgrade)])).toStrictEqual([summary]);
 		});
 
-		it("skips an entry whose stoppedWhileQueued is not a boolean", () => {
-			expect(readPersistedRuns([recordEntry({ ...persistedRecord(), stoppedWhileQueued: "yes" })])).toEqual([]);
+		it.each(["yes", null, 0])("skips an entry whose stoppedWhileQueued is not a boolean (%j)", (stoppedWhileQueued) => {
+			expect(readPersistedRuns([recordEntry({ ...persistedRecord(), stoppedWhileQueued })])).toEqual([]);
 		});
 
 		it("skips an entry whose status is not a subagent status", () => {
