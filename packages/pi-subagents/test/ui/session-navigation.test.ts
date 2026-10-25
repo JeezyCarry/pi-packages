@@ -154,11 +154,10 @@ describe("listNavigableAgents", () => {
       expect(entry.label).toBe("Agent (Investigate the bug) · 3 tools · stopped · queued 1.0s · session released (snapshot)");
     });
 
-    it("labels a persisted resume stopped while queued from its entry, which does not record it", () => {
-      // The subagents:record entry has no stoppedWhileQueued yet (#1086), so this row reads as a run that started.
-      const persisted = persistedRun({ status: "stopped", startedAt: 1000, completedAt: 2000 });
+    it("labels a persisted resume stopped while queued with the time it waited", () => {
+      const persisted = persistedRun({ status: "stopped", stoppedWhileQueued: true, startedAt: 1000, completedAt: 2000 });
       const [entry] = listNavigableAgents([], registry, [persisted]);
-      expect(entry.label).toBe("Agent (Earlier task) · 7 tools · stopped · 1.0s · session released (snapshot)");
+      expect(entry.label).toBe("Agent (Earlier task) · 7 tools · stopped · queued 1.0s · session released (snapshot)");
     });
   });
 });
@@ -171,6 +170,7 @@ function persistedRun(overrides: Partial<PersistedRunSummary> = {}): PersistedRu
     status: "completed",
     startedAt: 1000,
     completedAt: 4000,
+    stoppedWhileQueued: false,
     toolUses: 7,
     outputFile: "/tasks/earlier.jsonl",
     ...overrides,

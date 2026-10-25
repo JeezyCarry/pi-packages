@@ -131,8 +131,7 @@ export function listNavigableAgents(
   const held = new Set(agents.map((record) => record.id));
   for (const run of persisted) {
     if (held.has(run.id) || !run.outputFile) continue;
-    // The subagents:record entry does not record whether the run was stopped while queued (#1086).
-    const label = buildLabel({ ...run, stoppedWhileQueued: false }, registry, true);
+    const label = buildLabel(run, registry, true);
     snapshots.push({ kind: "snapshot", outputFile: run.outputFile, heading: buildHeading(run, registry), label });
   }
   return [...live, ...snapshots];
