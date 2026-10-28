@@ -144,6 +144,7 @@ describe("SubagentEventsObserver", () => {
 					error: undefined,
 					startedAt: 1000,
 					completedAt: 2000,
+					stoppedWhileQueued: false,
 					outputFile: undefined,
 					toolUses: 3,
 				});
@@ -219,6 +220,7 @@ describe("SubagentEventsObserver", () => {
 					error: undefined,
 					startedAt: 3000,
 					completedAt: 4000,
+					stoppedWhileQueued: false,
 					outputFile: undefined,
 					toolUses: 3,
 				});

@@ -343,6 +343,44 @@ describe("AgentWidget.update self-seeds finished agents", () => {
 	});
 });
 
+describe("AgentWidget — a record that runs again", () => {
+	// The fixture is mutated in place between notifications: makeWidget's
+	// listAgents() reads the same object on every update.
+	function settleRunAgain(status: "completed" | "error") {
+		const agent: { id: string; status: string; completedAt?: number } = { id: "a1", status, completedAt: 5000 };
+		const fixture = makeWidget([agent]);
+		fixture.widget.update();
+		for (let turn = 0; turn < 2; turn++) fixture.widget.onTurnStart();
+		expect(fixture.lastContent()).toBeUndefined();
+
+		agent.status = "running";
+		agent.completedAt = undefined;
+		fixture.widget.onSubagentRunStarted(createTestSubagent({ id: "a1", status: "running" }), "resume");
+		agent.status = status;
+		agent.completedAt = 9000;
+		fixture.widget.onSubagentRunFinished(createTestSubagent({ id: "a1", status }), "resume");
+		return fixture;
+	}
+
+	it("lingers a resumed run's finished row for one turn, like the first run's", () => {
+		const { widget, lastContent } = settleRunAgain("completed");
+		expect(typeof lastContent()).toBe("function");
+
+		widget.onTurnStart();
+		expect(lastContent()).toBeUndefined();
+	});
+
+	it("lingers a resumed run that errored for two turns", () => {
+		const { widget, lastContent } = settleRunAgain("error");
+		expect(typeof lastContent()).toBe("function");
+
+		widget.onTurnStart();
+		expect(typeof lastContent()).toBe("function");
+		widget.onTurnStart();
+		expect(lastContent()).toBeUndefined();
+	});
+});
+
 describe("AgentWidget — self-drives from lifecycle notifications", () => {
 	beforeEach(() => {
 		vi.useFakeTimers();

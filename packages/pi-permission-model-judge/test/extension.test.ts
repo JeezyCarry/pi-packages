@@ -89,6 +89,9 @@ function makeService(): PermissionsService & {
   return {
     checkPermission: vi.fn(),
     getToolPermission: vi.fn(),
+    isToolFullyDenied: vi.fn(),
+    getToolAccessExtractor: vi.fn(),
+    getToolInputFormatter: vi.fn(),
     registerToolInputFormatter: vi.fn(() => () => {}),
     registerToolAccessExtractor: vi.fn(() => () => {}),
     registerAuthorizer: vi.fn(() => disposer),

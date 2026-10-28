@@ -290,7 +290,9 @@ Print:
 - Issue close confirmation(s), including any co-shipped issue and any third-party PR closed.
 - Worktree/branch teardown confirmation (worktree lane).
 - Anything that was skipped and why.
-- If this issue completed the **last** step of a roadmap phase, flag it: the phase-close runs via `/finish-phase <PKG>` (after `/retro`), never as a filed issue.
+- Whether this issue completed the **last** step of a roadmap phase — run the check, never report it unchecked.
+  With `A=packages/<pkg>/docs/architecture/architecture.md`, `grep -nE '^#{3,4} ✅ .*\[#$1\]' "$A"` finds this issue's landed step and `grep -nE '^#{3,4} .*\[#[0-9]+\]' "$A" | grep -v '✅'` lists the open ones.
+  A landed step with no open steps means flag it: the phase-close runs via `/finish-phase <PKG>` (after `/retro`), never as a filed issue.
 - The next step: `/retro $1` — the deliberate, interactive final retrospective, run here at the root on `main` (commits straight to `main`).
 
 Name `/retro $1` as the single next step.

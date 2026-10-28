@@ -355,20 +355,29 @@ The excluded surface is the **gate** surface the rule fired on, not the tool nam
 This holds for an ask forwarded up from a subagent exactly as it does for a local one.
 See [migration/0635-forwarded-ask-delegation-envelope.md](migration/0635-forwarded-ask-delegation-envelope.md).
 
+One exception is granted per ask, never per family: the **nothing-on-disk license**.
+A bash command's `external_directory` ask carries it when the command reads verbatim (it parses without error recovery, so an extglob such as `@(etc|var)` does not, and holds no backslash-newline) and every path the ask flags is a whole word spelled as the absolute path it names (bounded by an unescaped space, tab, newline, or operator, no relative spelling, no `.` or `..` segment, no glob, brace, `$` expansion, command substitution, or escape), names nothing on disk below the filesystem root (the root itself does not qualify), and is not a proven write (an output redirect, or a `commandEffects` writer).
+That is the shape of a token that only looks like a path, such as the spreadsheet cell in `officecli set data.xlsx /Sheet1/B1`.
+A link's `allow` on a licensed ask is honored, and the review log records `authorizer_allow_licensed` naming the link; one flagged path that exists, or sits under an existing directory, withholds the license from the whole ask.
+A tool's ask (`write`, `edit`, an extension tool) never carries it, and the `path` family takes no license.
+See [migration/0882-nothing-on-disk-delegation-license.md](migration/0882-nothing-on-disk-delegation-license.md).
+
 When a **subagent** raises the ask, the chain runs one hop up.
 The subagent forwards the request to the session serving it, and that session resolves it against its own rules and then runs *its* chain over the same evidence — so your configured links do review a subagent's asks, in the session you are watching.
 The subagent itself resolves no links (an extension cannot register one in a child session at all), and records `authorizer_chain_delegated` in the review log to say so.
 
-Three review-log records make the chain observable, all keyed by the ask's `requestId`:
+These review-log records make the chain observable, all keyed by the ask's `requestId`:
 
 | Record                               | Meaning                                                                                                                                                |
 | ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `authorizer_chain_resolved`          | the links consulted on this ask, recorded before they run — a link that defers otherwise leaves no trace                                               |
 | `authorizer_chain_delegated`         | the ask came from a relaying subagent node; the named links were deliberately not run here                                                             |
 | `authorizer_chain_unregistered_link` | a configured name had no registered link — a real misconfiguration; the ask still reaches the terminal, and the first skip of that name also warns you |
+| `authorizer_allow_licensed`          | a link's `allow` on an `external_directory` ask was honored because the ask carried the nothing-on-disk license; names the `link` and the `license`    |
 | `authorizer_link_vacant`             | a link was registered on a relaying node, which runs no chain — accepted and recorded, never consulted                                                 |
 
 Extension authors: register a link from a `permissions:ready` handler via `getPermissionsService(sessionId).registerAuthorizer(name, authorize)`, taking `sessionId` from that event's payload; the callback receives the ask details and a narrow, session-scoped `PermissionQuery` (`checkPermission` / `getToolPermission`) so it can consult the deterministic engine at gate parity.
+The details' `accessIntent` carries the gate surface the rule fired on and, on a licensed bash `external_directory` ask, `delegationLicense: "nothing-on-disk"`; a link that allows only what the checkpoint will honor can read it before calling a model.
 Registration returns a disposer, and only one link may hold a given name.
 Register in every session without branching: a session that relays its asks accepts the link and records `authorizer_link_vacant` rather than refusing it.
 For a complete working example, see [`@gotgenes/pi-permission-model-judge`](https://github.com/gotgenes/pi-packages/tree/main/packages/pi-permission-model-judge): it registers a `model-judge` link on `permissions:ready` that reviews `external_directory` asks and auto-denies mistyped paths with a corrective reason.

@@ -108,6 +108,7 @@ flowchart TB
         ResultRenderer["result-renderer<br/>(pure rendering)"]
         SpawnConfig["spawn-config<br/>(resolve params)"]
         FgRunner["foreground-runner"]
+        ProgressStream["progress-stream<br/>(inline progress)"]
         BgSpawner["background-spawner"]
         GetResult["get_subagent_result"]
         GetResultRenderer["get-result-renderer<br/>(pure rendering)"]
@@ -146,6 +147,7 @@ classDiagram
         +description: string
         +isBackground: boolean
         -state: SubagentState
+        -currentRun: SubagentRun
         -execution: SubagentExecution
         +status: SubagentStatus
         +result?: string
@@ -154,16 +156,16 @@ classDiagram
         +lifetimeUsage: LifetimeUsage
         +subagentSession?: SubagentSession
         +toolCallId?: string
-        +markRunning() delegates
+        +latestRun: RunOutcome
         +markCompleted() delegates
         +isActive(): boolean
         +isTerminalError(): boolean
         +isRunning(): boolean
         +canBeSteered(): boolean
         +run()
-        +resume(prompt, signal)
+        +resume(prompt, options)
         +abort(): boolean
-        +waitUntilSettled(signal): Promise~void~
+        +waitUntilSettled(signal): Promise~RunOutcome~
         +steer(message): Promise~SteerOutcome~
         +isSessionReady(): boolean
         +getConversation(): string | undefined
@@ -173,24 +175,40 @@ classDiagram
         +disposeSession()
     }
 
-    class SubagentState {
+    class SubagentRun {
+        +kind: RunKind
+        +inBackground: boolean
         +status: SubagentStatus
         +result?: string
         +error?: string
         +startedAt: number
         +completedAt?: number
+        +pendingQuestion?: string
+        +turnBudget?: TurnBudget
+        +runUpdates: string[]
+        +claimed: boolean
+        +consumed: boolean
+        +replaced: boolean
+        +start(startedAt, callerSignal, onCallerAbort)
+        +markCompleted() ... stopQueued()
+        +claim(): CarrierClaim
+        +markConsumed()
+        +markReplaced()
+        +abort()
+        +isActive(): boolean
+    }
+
+    class SubagentState {
         +toolUses: number
         +lifetimeUsage: LifetimeUsage
         +compactionCount: number
-        +markRunning() ... markStopped()
-        +resetForResume()
+        +activeTools: ReadonlyMap
+        +responseText: string
+        +lastProgressAt: number
         +incrementToolUses()
         +addUsage(delta)
         +incrementCompactions()
-        +isActive(): boolean
-        +isTerminalError(): boolean
-        +isRunning(): boolean
-        +canBeSteered(): boolean
+        +markProgress(at)
     }
 
     class SubagentExecution {
@@ -243,6 +261,7 @@ classDiagram
 
     SubagentManager --> Subagent : creates/manages
     Subagent --> SubagentState : owns (private)
+    Subagent --> SubagentRun : current run (one per run)
     Subagent --> SubagentExecution : runs via (mandatory)
     SubagentManager --> ParentSnapshot : receives at spawn
     SubagentsService --> SubagentManager : wraps via adapter
@@ -253,18 +272,13 @@ classDiagram
 
 ```mermaid
 stateDiagram-v2
-    [*] --> queued : spawn (background, at capacity)
-    [*] --> running : spawn (foreground or under limit)
-    queued --> running : capacity available
+    [*] --> queued : run created (with its agent, or by a resume)
+    queued --> running : start() — at once, or when capacity frees for a queued background run
     queued --> stopped : stopQueued() — never started
     running --> completed : agent finished, including after the turn-budget warning
     running --> error : unhandled exception
     running --> aborted : harness stop at the turn ceiling
     running --> stopped : abort() called
-    completed --> running : resetForResume
-    stopped --> running : resetForResume
-    error --> running : resetForResume
-    aborted --> running : resetForResume
     completed --> [*]
     error --> [*]
     aborted --> [*]
@@ -283,8 +297,12 @@ A `TurnBudgetTracker` (`turn-limits.ts`) counts successful turns and decides whe
 `phase` is `warned` once the warning went out and `exhausted` when the harness stopped the run: the one case a run ends `aborted`.
 Every run, the initial one or a resume, gets a fresh tracker under the limits the session resolved at creation (`resolveTurnLimits`).
 
+The diagram is one run's lifecycle, and a subagent is a sequence of runs: its initial run is born with it, and each resume starts a new run of its own rather than returning a settled one to `running`.
+A settled run's outcome stays as it ended, so a carrier holding that run (a `get_subagent_result` wait a resume overtook) still reads it; the run is marked replaced, and its question counts as answered by the resume.
+The agent's status and outcome fields read through to its current run.
+
 Note: `markStopped` always succeeds regardless of current status.
-Other terminal transitions guard against overwriting `stopped` — once an agent is stopped, only `resetForResume` can return it to `running`.
+Other terminal transitions guard against overwriting `stopped` — once a run is stopped, it stays stopped.
 `stopQueued` composes `markStopped` with a never-started marker and, like every terminal transition, notifies the lifecycle observer — so a queued stop publishes the same events, session entry, and nudge a running stop does.
 
 ## Execution flow
@@ -372,13 +390,13 @@ src/
 │   └── session-dir.ts              session directory derivation
 │
 ├── lifecycle/                      agent execution and state tracking
-│   ├── subagent-manager.ts         collection manager + observer wiring + session-retention sweep (consumption-aware; an unanswered question holds the safety cap); the resume choke point, refusing from the record's own predicate and reporting a discriminated outcome, so every front door declines the same resumes; a door that returns before the resumed run ends starts one synchronously, and each resume's caller decides whether its outcome is claimed
+│   ├── subagent-manager.ts         collection manager + observer wiring + session-retention sweep (consumption-aware; an unanswered question holds the safety cap); the resume choke point, refusing from the record's own predicate and reporting a discriminated outcome, so every front door declines the same resumes; a door that returns before the resumed run ends starts one synchronously, and each resume's caller decides whether its outcome is claimed; admits a background resume through the limiter like a background spawn, while a foreground one starts at once
 │   ├── create-subagent-session.ts  assembly factory: MCP pattern expansion, Pi built-in selection, session creation, spawn-tool denylist, core child-tool install, binding
 │   ├── subagent-session.ts         born-complete child session: one turn loop for every run (the first carries the parent context and announces completion), steer, shutdown-then-dispose teardown
 │   ├── turn-limits.ts              turn-budget policy: TurnBudget, the TurnBudgetTracker that decides warnings and stops, resolveTurnLimits (a session's limits, resolved at creation), normalizeMaxTurns (minimum 2)
-│   ├── subagent.ts                 owns full execution lifecycle (run, resume, abort, steer, wait-until-settled); a teardown with no result text to carry its addendum records it as a notice and announces one produced after delivery; answers why a resume would be refused (resumeRefusal, including a live run), which the resume choke point and every result carrier read rather than re-deriving; reports a resume's start as well as its end; wait-until-settled reports whether the waited run settled, has not, or was replaced by a resume (carrying what it ended with)
-│   ├── subagent-state.ts           lifecycle status + metrics + result-delivery value object (transitions, accumulators, classification predicates); delivery carries a revocable claim per carrier (each releases only its own handle), a one-way consumption latch, and a per-run update ledger that renders only what no announcement delivered; numbers its runs and keeps the outcome of the run the latest resume replaced
-│   ├── subagent-run.ts             one run of a subagent: its kind (initial or resume), its own abort lever, caller-signal wiring, and record-observer unsubscribe
+│   ├── subagent.ts                 owns full execution lifecycle (run, resume, abort, steer, wait-until-settled); a teardown with no result text to carry its addendum records it as a notice and announces one produced after delivery; answers why a resume would be refused (resumeRefusal, including a live run and a resume still queued for a slot), which the resume choke point and every result carrier read rather than re-deriving; reports a resume's start as well as its end; holds its current run and reads its outcome through it, starting each resume as a new run that marks the one it replaces, born queued and started when its scheduler admits it (a run stopped while it waits never starts); wait-until-settled hands back the run the wait began on
+│   ├── subagent-state.ts           what spans a subagent's runs: lifetime metrics and live activity (accumulators, last progress), plus the status vocabulary and its classification predicates
+│   ├── subagent-run.ts             one run of a subagent and its outcome: kind (initial or resume), mode, status and result with their transitions, question, workspace notice, turn budget, and an update ledger that renders only what no announcement delivered; delivery carries a revocable claim per carrier (each releases only its own handle) and a one-way consumption latch; born queued with its own abort lever, it wires the caller's signal when it starts and keeps the record-observer unsubscribe until it ends
 │   ├── record-observer.ts          session-event stats observer; stamps each event as the run's last progress
 │   ├── workspace-bracket.ts        child workspace prepare/dispose lifecycle; idempotent dispose, reports a torn-down workspace
 │   ├── concurrency-limiter.ts       background admission gate: schedules run thunks FIFO against the limit
@@ -403,8 +421,9 @@ src/
 │   ├── result-renderer.ts          pure per-status result rendering
 │   ├── spawn-config.ts             pure config resolution
 │   ├── foreground-runner.ts        foreground execution loop
+│   ├── progress-stream.ts          inline spinner progress a foreground run streams to its tool call, for a spawn and a resume alike
 │   ├── background-spawner.ts       background spawn setup + the launch message every background door (spawn, resume) returns
-│   ├── get-result-tool.ts          get_subagent_result tool; an optional timeout bounds a wait without stopping the agent; a wait a resume superseded reports the run it waited for
+│   ├── get-result-tool.ts          get_subagent_result tool; an optional timeout bounds a wait without stopping the agent; a wait reports the run it waited on, even when a resume replaced it
 │   ├── get-result-report.ts        pure get_subagent_result report formatter
 │   ├── get-result-renderer.ts      pure get_subagent_result line assembly for the collapsed and expanded TUI views
 │   ├── steer-tool.ts               steer_subagent tool
@@ -692,7 +711,7 @@ Pulling each apart by asking "who changes this, how often, and who needs to know
 3. **The hook surface** — the points where an extension alters or augments the child before and around its run.
    This is the child session's own extension binding (see below), not data on the subagent.
 4. **Result delivery** — whether the parent has consumed the result, when to nudge, how the result reaches the caller.
-   This domain now has a home: `consumedAt` is a first-class field on `SubagentState`, marked only at the parent-initiated return edges (`get_subagent_result`, foreground return, resume return); the notification layer reads it to suppress a nudge but never owns it, and the retention sweep reads it to time session release (#617).
+   This domain now has a home: `consumedAt` is a first-class field on each `SubagentRun`, marked only at the parent-initiated return edges (`get_subagent_result`, foreground return, resume return); the notification layer reads it to suppress a nudge but never owns it, and the retention sweep reads it to time session release (#617).
 
 The ~20 optional constructor fields and the runtime `run()` throws are the pressure these four domains exert on one class.
 Separating them is what makes the Phase 17 steps fall out rather than fight back.
@@ -703,9 +722,10 @@ The four domains above describe one run, and a subagent has several: the initial
 What belongs to a run is a fact about that run, not about the agent: its abort lever and the signal wired to it, its session subscription, its turn budget, its mid-run update ledger, its outcome and whether a carrier claimed or consumed it, its mode (foreground or background), and its admission through the concurrency gate.
 What belongs to the agent outlives every run: identity, the child session, the workspace, and the lifetime metrics.
 
-The code does not draw this boundary yet.
-Per-run facts live as fields on the per-agent record and are cleared by hand where a run begins (`resetForResume`), and "initial or resume" is re-decided in parallel method pairs at the session, record, and observer layers.
-The tells are the bug family of a lever set at one lifecycle edge and read at another ([#913], [#949]) and a method pair that has already diverged.
+The code draws this boundary except for admission: `SubagentRun` carries a run's abort lever, signal wiring, session subscription, kind, mode, and its whole outcome (status, result, question, turn budget, update ledger, claims, and consumption), and `Subagent` reads each through its current run.
+`SubagentState` keeps only what spans runs: the lifetime metrics and live activity.
+A resume starts a new run instead of resetting the old one, and a waiter holds the run it waited on.
+The tells were the bug family of a lever set at one lifecycle edge and read at another ([#913], [#949]) and a method pair that has already diverged.
 
 The target: the record holds its current run, a resume starts a new run instead of resetting the old one, a waiter holds the run it waited on, and the run's kind is a property of the run, decided once where it is published (`subagents:completed` versus `subagents:resumed`) rather than in every layer.
 
@@ -938,6 +958,14 @@ End-of-planning `src/` totals: 12,420 LOC across 73 files, 2,065 tests across 85
 - Scout inventory (scattered) — the items in files a step already edits ride that step (operator decision, 2026-10-09).
   `result.content[0].text` in the tool tests (102 sites across 5 files) rides [#947]; the events-observer `{id, type, description}` payload triad (5 sites) and the `subagent-session.test.ts` items (an assistant-message literal repeated 10+ times and a third local session mock) ride [#1050]; `(manager as any).sweep()` (8 sites) rides [#1051]; and `prompts.test.ts`'s duplicated append-mode test, with the local `AgentConfig` factories in four test files, rides [#1017].
   The rest is named as the leading candidate for Phase 24, a craftsmanship lean phase if it still stands at that discovery, rather than re-deferred to a boy-scout path that has not reduced it: `settings.ts` `sanitize()` range-check triplication, `index.ts`'s untested inline `createSession` lambda, `sendMessage.mock.calls[0][0]` in `notification.test.ts` (6 sites), the `createManager()` observer defaults, and the five `src/` functions over 60 lines (`index.ts`'s default export, `createSubagentSession`, `toToolDefinition`, `runForeground`, and `resolveSpawnConfig`).
+- [#1079] — filed by [#1013]'s planning; becomes a new step after [#1013] (operator decision).
+  A queued agent's `get_subagent_result` body falls through to `No output.`; queued spawns already reach it, and [#1013] makes a background resume reach it too.
+- [#1080] — filed by [#1079]'s planning; becomes a new step after [#1079] (operator decision).
+  The same report's `Duration` stat reads a queued run's time since spawn as `(running)`; [#1079] fixes the body and the bounded-wait note and leaves the stat to this step.
+- [#1085] — filed by [#1080]'s planning; becomes a new step after [#1080] (operator decision).
+  The `/subagents:sessions` navigator label reads a queued resume's time in the queue as `(running)` through the shared `formatDuration`, which [#1080] leaves alone by fixing the report at its call site.
+- [#1086] — filed by [#1085]'s planning; becomes a new step after [#1085] (operator decision).
+  After a `/reload`, a resume stopped while queued is labeled from its `subagents:record` entry, which does not record `stoppedWhileQueued`, so the persisted row still reads its queue time as the run's duration; [#1085] fixes the in-memory entries and leaves this row.
 
 #### Deferred tidyings swept
 
@@ -1039,7 +1067,7 @@ The run-kind row reads 0, the payload row 1, the `subagent.test.ts` `mock.calls[
 
 Release: independent
 
-#### [#1012] A background resume shows a widget row
+#### ✅ [#1012] A background resume shows a widget row
 
 **Cause:** mode (foreground or background) is a fact about a run, but the record fixes it at spawn as `isBackground`, so an agent spawned in the foreground and resumed in the background runs with no widget row: the widget lists the records whose spawn-time mode was background.
 
@@ -1047,13 +1075,18 @@ Release: independent
 - **Target:** `src/ui/agent-widget.ts` (`listBackgroundAgents`), the per-run object from [#1049], and `SubagentManager.startResume`.
 - **Hard dependency:** [#1049] — the run is what carries the mode.
 - **Design question the step must settle:** whether `SubagentRecord.isBackground` keeps its spawn-time meaning or reports the current run's mode, under decision 0005 (the snapshot is by value, and giving a field a new meaning needs the same care as retyping it).
-- **Outcome:** a record running a background resume shows in the widget whatever mode it was spawned in (pinned).
-- **Commit type:** `fix:`.
+- **Outcome:** a record running a background resume shows in the widget regardless of the mode it was spawned in (pinned).
+- **Commit type:** `fix!:` (the public `SubagentRecord.isBackground` changed meaning).
 - **Impact 3 / Risk 2 / Priority 12.**
+
+Landed: `SubagentRun` carries its mode (`inBackground`), and `Subagent.isBackground`, with the public `SubagentRecord.isBackground` copied from it, reports the current run's mode: the spawn's before the first run, then each run's own.
+`SubagentRecord.isBackground` therefore keeps no spawn-time meaning, a breaking change decision 0005 now records.
+Every front door states a resume's mode through the required `ResumeCallOptions.background`: the tool's `run_in_background: true` resume and `SubagentsService.resume()` run in the background, and the tool's foreground resume streams inline progress through the `startProgressStream` it now shares with a foreground spawn.
+The widget also resets a record's linger age when a run starts, so a resumed run's finished row lingers like the first run's.
 
 Release: independent
 
-#### [#1051] Let each run own its outcome, so a waiter holds the run it waited on
+#### ✅ [#1051] Let each run own its outcome, so a waiter holds the run it waited on
 
 **Cause:** the run's outcome lives on the per-agent `SubagentState`, which simulates a sequence of runs by hand.
 `resetForResume` clears eight fields to start the next run, a one-slot `_superseded` buffer stands in for the run a waiter waited on, and claims are special-cased to survive the reset, the seam [#1015] fixed a bug in.
@@ -1070,9 +1103,15 @@ Release: independent
 - **Commit type:** `refactor:`; `test:` for the ride-along.
 - **Impact 4 / Risk 3 / Priority 12.**
 
+Landed: `SubagentRun` owns one run's outcome (status, result, error, timestamps, the never-started marker, question, workspace notice, turn budget, update ledger, claims, and consumption) and its transitions, and `Subagent` reads each through its current run; `SubagentState` keeps the lifetime metrics and live activity.
+A run is born queued with its agent or its resume and wires the caller's signal when it starts, so a queued agent is claimed on the run it is waiting to start, and a resume's caller passes `claimOutcome` so the new run is born claimed.
+`waitUntilSettled` returns the run the wait began on, a resume marks the run it replaces, and a replaced run reports no open question, so `get_subagent_result` reports that run directly; `liveOutcome`, `withoutQuestion`, and the superseded slot are gone, and a wait two resumes overtook now reports its own run instead of the live record.
+A terminal transition lands on the run it ends, so an aborted run whose turn loop returns after a resume started no longer overwrites the resume (`fix:`, reachable through `SubagentsService.abort` then `resume`).
+The sweep tests drive the real interval through fake timers; the `_superseded`, `resetForResume`, and `as any` rows read 0, `lifecycle/subagent.ts` fell from 846 to 827 lines, `fallow dupes --workspace @gotgenes/pi-subagents` reports no clone group (the `subagent-state.ts` fixture pairing dissolved), and health reads 88 (A).
+
 Release: independent
 
-#### [#1013] Admit a background resume through `maxConcurrent`
+#### ✅ [#1013] Admit a background resume through `maxConcurrent`
 
 **Cause:** admission through the concurrency gate is a fact about a run, but only the initial run is scheduled on the limiter.
 A resume starts directly, so since [#987] a background resume runs at capacity where a background spawn would queue.
@@ -1085,6 +1124,83 @@ A resume starts directly, so since [#987] a background resume runs at capacity w
 - **Outcome:** a background resume at capacity queues and starts when a slot frees, or the decision not to queue is recorded with its reason; pinned either way.
 - **Commit type:** to be decided at plan time.
 - **Impact 3 / Risk 3 / Priority 9.**
+
+Landed: a background resume, from the tool's `run_in_background: true` and from `SubagentsService.resume()`, is admitted through the limiter like a background spawn, and a foreground tool resume starts at once.
+`Subagent.resume` takes a `RunScheduler`: the resume's run is born queued (claimed when the caller asks) and starts when admitted, and a run stopped while it waited never starts, which the guard reads on the run rather than the record.
+`stopQueued` ends a queued run on its own kind's path, so a stopped queued resume publishes `subagents:resumed` once.
+A record whose resume is queued refuses another with the new `resume-queued` member of `ResumeRefusal`, a `fix!:` because the union is published; the tool's launch message says a resume was queued, with its position.
+`concurrency-limiter.ts` needed no change.
+
+Release: independent
+
+#### ✅ [#1079] A queued agent's report says it has not started
+
+**Cause:** the shared outcome body has no arm for a run still waiting on a concurrency slot.
+`renderOutcomeBody` (`src/observation/outcome-delivery.ts`) words `running`, `error`, and a queued run that was stopped, so a queued run falls through to the empty-result fallback and `get_subagent_result` reports `No output.` under `Status: queued`.
+
+- **Smell:** Category C (a status the carrier's body does not distinguish from an empty result).
+- **Target:** `src/observation/outcome-delivery.ts` (`renderOutcomeBody`), `src/tools/get-result-report.ts` (`renderWaitExpired`), and their tests.
+- **Soft dependency:** [#1013] — a background resume at capacity becomes a second way to reach the queued state.
+- **Outcome:** a queued agent's report says it is waiting for a concurrency slot and has not started, and points at `wait: true`; pinned.
+- **Commit type:** `fix:`.
+- **Impact 2 / Risk 1 / Priority 10.**
+
+Landed: `renderOutcomeBody` words a queued run as not started and waiting for a concurrency slot, pointing at `wait: true`, so `get_subagent_result` no longer reports `No output.` for it; only that pull can see the status, since every other carrier renders a settled run.
+A bounded wait that expires on a queued agent now says it is still queued and that waiting again is how to collect it, where the running agent's note (unchanged) says waiting again will not unstick it.
+The report's `Duration` stat is [#1080]'s.
+
+Release: independent
+
+#### ✅ [#1080] A queued agent's report does not call its wait running time
+
+**Cause:** the report's `Duration` stat does not distinguish a run waiting on a concurrency slot from a running one.
+`GetResultTool.buildReport` renders it with `formatDuration(startedAt, completedAt)`, which appends `(running)` whenever `completedAt` is unset, and a run's `startedAt` is its construction time until the limiter admits it.
+
+- **Smell:** Category C (a status a carrier's stat does not distinguish).
+- **Target:** `src/tools/get-result-tool.ts` (`buildReport`, `buildGetResultDetails`) and its tests; `formatDuration` in `src/ui/display.ts` is shared, so the call site is the likelier home.
+- **Soft dependency:** [#1079] — the same report's body and bounded-wait note learn the queued state first.
+- **Outcome:** a queued agent's report, and that of a run stopped while queued, does not label its time in the queue as running time; pinned.
+- **Commit type:** `fix:`.
+- **Impact 1 / Risk 1 / Priority 5.**
+
+Landed: `get_subagent_result` renders the `Duration` stat of a run the limiter never admitted as its time in the queue, `queued 5.0s`, in the report text and the TUI details alike.
+A run still queued reads its time since it was enqueued; a run stopped while queued keeps the time it waited, frozen at the stop.
+The decision lives in `formatRunDuration` (`src/tools/get-result-tool.ts`), which both report builders call; the shared `formatDuration` is unchanged, and the session navigator's label, its other caller, is [#1085]'s.
+
+Release: independent
+
+#### ✅ [#1085] A queued resume's navigator label does not call its wait running time
+
+**Cause:** the session navigator's label does not distinguish a run waiting on a concurrency slot from a running one.
+`buildLabel` (`src/ui/session-navigation.ts`) renders it with `formatDuration(startedAt, completedAt)`, and a queued resume keeps its prior session, so `listNavigableAgents` lists it as a live entry labeled `queued · 3.0s (running)`.
+
+- **Smell:** Category C (a status a carrier's label does not distinguish).
+- **Target:** `src/ui/session-navigation.ts` (`buildLabel`) and its tests; possibly the queue-time rendering [#1080] settles for the report.
+- **Soft dependency:** [#1080] — the report settles the queue-time wording first.
+- **Outcome:** a queued resume's navigator label does not present its time in the queue as running time; pinned.
+- **Commit type:** `fix:`.
+- **Impact 1 / Risk 1 / Priority 5.**
+
+Landed: the `/subagents:sessions` picker labels a queued resume `queued · queued <seconds>` and a resume stopped while queued `stopped · queued <seconds>`, live or released in memory, in the wording `get_subagent_result` uses.
+`formatRunDuration` now lives in `src/ui/display.ts` over a narrow `RunTiming`, shared by both report builders and `buildLabel`, and `formatDuration` is private to it.
+A run labeled from its persisted `subagents:record` entry still reads as one that started; that row is [#1086]'s.
+
+Release: independent
+
+#### ✅ [#1086] A reloaded resume stopped while queued does not label its wait as its duration
+
+**Cause:** the `subagents:record` entry does not record whether a run was stopped while queued.
+`readPersistedRuns` returns a `PersistedRunSummary` without `stoppedWhileQueued`, so `buildLabel` renders a persisted resume stopped while queued as `stopped · 3.0s · session released (snapshot)`.
+
+- **Smell:** Category C (a status a carrier's label does not distinguish).
+- **Target:** `src/persisted-record.ts` (`PersistedSubagentRecord`, `PersistedRunSummary`, `toPersistedRecord`, `asRunSummary`), the persisted-runs call site in `src/ui/session-navigation.ts` (`listNavigableAgents`), and their tests.
+- **Soft dependency:** [#1085] — the navigator label learns the queue-time rendering first.
+- **Outcome:** a persisted resume stopped while queued is labeled with its time in the queue, and an entry written before the field existed reads as not stopped while queued; pinned.
+- **Commit type:** `fix:`.
+- **Impact 1 / Risk 1 / Priority 5.**
+
+Landed: the `subagents:record` entry records `stoppedWhileQueued`, copied by `toPersistedRecord` and validated by `asRunSummary`, so after a `/reload` the `/subagents:sessions` row of a resume stopped while queued reads `stopped · queued <seconds> · session released (snapshot)`, like its in-memory row.
+An entry written before the field existed reads as not stopped while queued and keeps its label, and `listNavigableAgents` passes each persisted run to `buildLabel` unadapted.
 
 Release: independent
 
@@ -1125,16 +1241,20 @@ Release: independent
 
 ```mermaid
 flowchart TD
-    S947["✅ #947<br/>Bounded wait with progress"] -.soft.-> S1051["#1051<br/>The run owns its outcome"]
+    S947["✅ #947<br/>Bounded wait with progress"] -.soft.-> S1051["✅ #1051<br/>The run owns its outcome"]
     S947 -.soft.-> S912["✅ #912<br/>Ask whether resumable"]
     S1048["✅ #1048<br/>Zone-order moves"] -.soft.-> S1049["✅ #1049<br/>Per-run lever and wiring"]
     S1049 --> S1050["✅ #1050<br/>One run lifecycle"]
     S1049 --> S1051
-    S1049 --> S1012["#1012<br/>Background resume widget row"]
+    S1049 --> S1012["✅ #1012<br/>Background resume widget row"]
     S1050 -.soft.-> S1051
-    S1050 --> S1013["#1013<br/>Resume admission"]
+    S1050 --> S1013["✅ #1013<br/>Resume admission"]
     S1051 -.soft.-> S1013
     S1012 -.soft.-> S1013
+    S1013 -.soft.-> S1079["✅ #1079<br/>Queued report body"]
+    S1079 -.soft.-> S1080["✅ #1080<br/>Queued report duration"]
+    S1080 -.soft.-> S1085["✅ #1085<br/>Queued navigator label"]
+    S1085 -.soft.-> S1086["✅ #1086<br/>Persisted queued label"]
     S1017["#1017<br/>Drop pre-0.86 arms"]
 ```
 
@@ -1153,9 +1273,9 @@ Every Track A step rewrites `lifecycle/subagent.ts`, so those steps sequence rat
 
 ### Release batches
 
-- Independently releasable: [#947], [#1048], [#1049], [#1050], [#1012], [#1051], [#1013], [#912], [#1017].
-- Release vehicles: [#947] (`feat:` or `fix:`, decided at plan time), [#1049] (`fix:` for [#949]), [#1050] (`fix:` for the resume's workspace rule), [#1012] (`fix:`), [#1013] (decided at plan time), [#912] (`feat:`), and [#1017] (`docs:` for the configuration note).
-  [#1048] and [#1051] are `refactor:` only and cut no release on their own.
+- Independently releasable: [#947], [#1048], [#1049], [#1050], [#1012], [#1051], [#1013], [#1079], [#1080], [#1085], [#1086], [#912], [#1017].
+- Release vehicles: [#947] (`feat:` or `fix:`, decided at plan time), [#1049] (`fix:` for [#949]), [#1050] (`fix:` for the resume's workspace rule), [#1012] (`fix!:`), [#1051] (`fix:` for a stopped run's late result landing on its resume), [#1013] (`fix!:` for the `resume-queued` refusal), [#1079] (`fix:`), [#1080] (`fix:`), [#1085] (`fix:`), [#1086] (`fix:`), [#912] (`feat:`), and [#1017] (`docs:` for the configuration note).
+  [#1048] is `refactor:` only and cuts no release on its own.
 - No batches: every step leaves the package releasable, and the refactoring steps preserve behavior.
 
 ## Refactoring history
@@ -1296,5 +1416,9 @@ The upstream test suite is run periodically as a regression canary for the sessi
 [#1049]: https://github.com/gotgenes/pi-packages/issues/1049
 [#1050]: https://github.com/gotgenes/pi-packages/issues/1050
 [#1051]: https://github.com/gotgenes/pi-packages/issues/1051
+[#1079]: https://github.com/gotgenes/pi-packages/issues/1079
+[#1080]: https://github.com/gotgenes/pi-packages/issues/1080
+[#1085]: https://github.com/gotgenes/pi-packages/issues/1085
+[#1086]: https://github.com/gotgenes/pi-packages/issues/1086
 [ADR-0002]: ../decisions/0002-extensions-on-a-minimal-core.md
 [ADR-0004]: ../decisions/0004-reconsider-ui-direction.md

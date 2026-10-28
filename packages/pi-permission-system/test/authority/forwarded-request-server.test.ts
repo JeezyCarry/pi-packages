@@ -683,6 +683,29 @@ describe("processInbox — child-fixed access facts on the escalated ask", () =>
     });
   });
 
+  test("carries the child's nothing-on-disk license onto the escalated ask details", async () => {
+    const details = await escalateForwardedAsk({
+      id: "req-license-facts",
+      source: "tool_call",
+      surface: "bash",
+      value: "officecli set data.xlsx /Sheet1/B1",
+      accessIntent: makeForwardedAccessIntent({
+        surface: "external_directory",
+        matchValues: ["/Sheet1/B1"],
+        boundaryValue: "/Sheet1/B1",
+        delegationLicense: "nothing-on-disk",
+      }),
+    });
+
+    // Projected from the child's fact, never re-probed on this node (ADR 0008).
+    expect(details.accessIntent).toStrictEqual({
+      surface: "external_directory",
+      matchValues: ["/Sheet1/B1"],
+      boundaryValue: "/Sheet1/B1",
+      delegationLicense: "nothing-on-disk",
+    });
+  });
+
   test("omits accessIntent entirely for a version-skew request that carried none", async () => {
     const details = await escalateForwardedAsk({
       id: "req-skew-facts",
@@ -807,7 +830,7 @@ describe("processInbox — bounded delegation over forwarded asks", () => {
       }),
     });
 
-    const enclosed = encloseInDelegationEnvelope(allowingLink);
+    const enclosed = encloseInDelegationEnvelope("judge", allowingLink);
 
     // The gate surface, not the displayed tool name, decides exclusion — so a
     // forwarded path ask is capped exactly like the same ask made locally.
@@ -823,8 +846,29 @@ describe("processInbox — bounded delegation over forwarded asks", () => {
       accessIntent: makeForwardedAccessIntent({ matchValues: ["npm test"] }),
     });
 
-    const enclosed = encloseInDelegationEnvelope(allowingLink);
+    const enclosed = encloseInDelegationEnvelope("judge", allowingLink);
 
+    expect(await enclosed(details, query, log)).toEqual({ kind: "allow" });
+  });
+
+  test("passes a link's allow on a forwarded external_directory ask the child licensed", async () => {
+    const details = await escalateForwardedAsk({
+      id: "req-envelope-licensed",
+      source: "tool_call",
+      surface: "bash",
+      value: "officecli set data.xlsx /Sheet1/B1",
+      accessIntent: makeForwardedAccessIntent({
+        surface: "external_directory",
+        matchValues: ["/Sheet1/B1"],
+        boundaryValue: "/Sheet1/B1",
+        delegationLicense: "nothing-on-disk",
+      }),
+    });
+
+    const enclosed = encloseInDelegationEnvelope("judge", allowingLink);
+
+    // The license crossed the wire, so the serving node honors the allow
+    // exactly as it would for the same ask made locally.
     expect(await enclosed(details, query, log)).toEqual({ kind: "allow" });
   });
 });

@@ -344,6 +344,47 @@ describe("readForwardedPermissionRequest — accessIntent field", () => {
     });
   });
 
+  describe("delegationLicense", () => {
+    function externalIntent(
+      license: unknown,
+    ): Record<string, unknown> & { delegationLicense?: unknown } {
+      return {
+        surface: "external_directory",
+        matchValues: ["/Sheet1/B1"],
+        boundaryValue: "/Sheet1/B1",
+        delegationLicense: license,
+        requesterCwd: "/repo",
+        principal: { sessionId: "child-session", agentName: "reviewer" },
+      };
+    }
+
+    it("round-trips the nothing-on-disk license the child's gate granted", () => {
+      const accessIntent: ForwardedAccessIntent = {
+        surface: "external_directory",
+        matchValues: ["/Sheet1/B1"],
+        boundaryValue: "/Sheet1/B1",
+        delegationLicense: "nothing-on-disk",
+        requesterCwd: "/repo",
+        principal: { sessionId: "child-session", agentName: "reviewer" },
+      };
+      const parsed = writeAndRead({ ...baseRequest(), accessIntent });
+      expect(parsed?.accessIntent).toStrictEqual(accessIntent);
+    });
+
+    it.each([
+      ["an unknown license", "anything-else"],
+      ["a boolean", true],
+    ])(
+      "drops %s but keeps the intent, since absence is the restrictive reading",
+      (_, license) => {
+        const raw = externalIntent(license);
+        const parsed = writeAndRead({ ...baseRequest(), accessIntent: raw });
+        const { delegationLicense: _dropped, ...rest } = raw;
+        expect(parsed?.accessIntent).toStrictEqual(rest);
+      },
+    );
+  });
+
   it("drops a malformed access intent to undefined (missing principal)", () => {
     const parsed = writeAndRead({
       ...baseRequest(),

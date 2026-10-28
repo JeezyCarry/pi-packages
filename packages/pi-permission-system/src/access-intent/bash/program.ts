@@ -11,6 +11,7 @@ import {
   collectSalvagedCommands,
 } from "./command-enumeration";
 import { WordReader } from "./node-text";
+import { parseUnresolvedWithin } from "./parse-health";
 import { type BashReparser, getParser, getWarmBashParser } from "./parser";
 import { ShellVariables } from "./shell-variable-expansion";
 import { withSalvagedRoots } from "./unresolved-salvage";
@@ -47,6 +48,7 @@ export class BashProgram {
     private readonly commandUnits: readonly BashCommand[],
     private readonly resolvedExternalAccesses: readonly BashExternalPath[],
     private readonly resolvedRuleCandidates: readonly BashPathRuleCandidate[],
+    private readonly spelledVerbatim: boolean,
   ) {}
 
   /**
@@ -101,7 +103,7 @@ export class BashProgram {
     options?: BashParseOptions,
   ): BashProgram {
     const tree = parser.parse(command);
-    if (!tree) return new BashProgram(command, [], [], []);
+    if (!tree) return new BashProgram(command, [], [], [], false);
 
     try {
       return withSalvagedRoots(tree.rootNode, parser, (salvaged) => {
@@ -114,7 +116,7 @@ export class BashProgram {
             words,
             options?.workdir,
             options?.commandEffects,
-          ).resolve(tree.rootNode, salvaged);
+          ).resolve(tree.rootNode, salvaged, command);
         return new BashProgram(
           command,
           [
@@ -123,6 +125,8 @@ export class BashProgram {
           ],
           externalAccesses,
           ruleCandidates,
+          !parseUnresolvedWithin(tree.rootNode) &&
+            !LINE_CONTINUATION.test(command),
         );
       });
     } finally {
@@ -191,4 +195,25 @@ export class BashProgram {
   pathRuleCandidates(): BashPathRuleCandidate[] {
     return [...this.resolvedRuleCandidates];
   }
+
+  /**
+   * Whether every token the slices hold is spelled as bash will read it: the
+   * grammar read the whole command without error recovery, and no
+   * backslash-newline continuation joins two lines into one word.
+   *
+   * Where either fails, a token can stand truncated (`/@(etc|var)` read as
+   * `/@`, `/e\<newline>tc` as `/e`) and the slices name paths the command does
+   * not reach. They stay usable for asking, which only ever surfaces more; a
+   * fact that would *relieve* an ask, such as the nothing-on-disk delegation
+   * license, must not be read from them.
+   */
+  readsVerbatim(): boolean {
+    return this.spelledVerbatim;
+  }
 }
+
+/**
+ * A backslash-newline, which bash removes before splitting words. Quoting is
+ * not modelled: the fact this feeds only ever withholds.
+ */
+const LINE_CONTINUATION = /\\\r?\n/;

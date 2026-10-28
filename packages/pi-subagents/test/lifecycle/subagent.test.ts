@@ -3,11 +3,12 @@ import type { CreateSubagentSessionParams } from "#src/lifecycle/create-subagent
 import { Subagent, type SubagentExecution, type SubagentLifecycleObserver } from "#src/lifecycle/subagent";
 import type { RunKind } from "#src/lifecycle/subagent-run";
 import { SubagentSession, type TurnLoopOptions, type TurnLoopResult } from "#src/lifecycle/subagent-session";
-import { SubagentState, type SubagentStateInit } from "#src/lifecycle/subagent-state";
+import { SubagentState, type SubagentStatus } from "#src/lifecycle/subagent-state";
 import type { TurnBudget } from "#src/lifecycle/turn-limits";
 import type { WorkspacePrepareContext, WorkspaceProvider } from "#src/lifecycle/workspace";
 import type { RunConfig } from "#src/runtime";
 import type { CompactionInfo, SubagentType } from "#src/types";
+import { gatedScheduler } from "#test/helpers/gated-scheduler";
 import { makeModel } from "#test/helpers/make-model";
 import { createTestSubagent, makeStubExecution } from "#test/helpers/make-subagent";
 import { makeWorkspace, makeWorkspaceProvider } from "#test/helpers/make-workspace";
@@ -74,7 +75,13 @@ function parkLoopUntilSignalled(turnLoop: ReturnType<typeof createSubagentSessio
 	return loop;
 }
 
-interface MakeSubagentOptions extends SubagentStateInit {
+interface MakeSubagentOptions {
+	// The initial run's outcome seeds, named one by one so each lands in a literal
+	// the type checker reads.
+	status?: SubagentStatus;
+	result?: string;
+	startedAt?: number;
+	completedAt?: number;
 	id?: string;
 	type?: SubagentType;
 	description?: string;
@@ -89,14 +96,15 @@ interface MakeSubagentOptions extends SubagentStateInit {
 
 /** Construct a Subagent with default identity and a stub execution, overridable per test. */
 function makeSubagent(overrides: MakeSubagentOptions = {}): Subagent {
-	const { id, type, description, isBackground, execution, state, ...stateOverrides } = overrides;
+	const { id, type, description, isBackground, execution, state, status, result, startedAt, completedAt } = overrides;
 	return new Subagent({
 		id: id ?? "1",
 		type: type ?? "general-purpose",
 		description: description ?? "test",
 		isBackground: isBackground ?? true,
 		execution: execution ?? makeStubExecution(),
-		state: state ?? (Object.keys(stateOverrides).length > 0 ? new SubagentState(stateOverrides) : undefined),
+		state,
+		outcome: { status, result, startedAt, completedAt },
 	});
 }
 
@@ -121,6 +129,7 @@ function createRunnableAgent(overrides?: {
 	workspaceProvider?: WorkspaceProvider;
 	isBackground?: boolean;
 	maxTurns?: number;
+	status?: SubagentStatus;
 }) {
 	const createSubagentSession = overrides?.createSubagentSession ?? defaultFactory();
 	const observer = overrides?.observer ?? {};
@@ -129,6 +138,7 @@ function createRunnableAgent(overrides?: {
 		id: "run-1",
 		description: "run test",
 		isBackground: overrides?.isBackground,
+		status: overrides?.status,
 		execution: {
 			createSubagentSession,
 			observer,
@@ -213,7 +223,7 @@ const RUN_KIND_DRIVERS: readonly RunKindDriver[] = [
 		runToOutcome: async ({ observer, ...loop }) => {
 			const held = await heldWorkspaceAgent(observer);
 			held.stub.runTurnLoop.mockImplementation(outcomeLoop(loop, held.ask));
-			await held.agent.resume("continue");
+			await held.agent.resume("continue", { background: true });
 			return held;
 		},
 	},
@@ -224,12 +234,14 @@ function createResumableAgent(overrides?: {
 	observer?: SubagentLifecycleObserver;
 	session?: ReturnType<typeof createMockSession>;
 	stub?: ReturnType<typeof createSubagentSessionStub>;
+	isBackground?: boolean;
 }) {
 	const session = overrides?.session ?? createMockSession();
 	const stub = overrides?.stub ?? createSubagentSessionStub(session);
 	const agent = makeSubagent({
 		id: "resume-1",
 		description: "resume test",
+		isBackground: overrides?.isBackground,
 		execution: makeStubExecution({ observer: overrides?.observer ?? {} }),
 		status: "completed",
 		result: "first",
@@ -296,13 +308,6 @@ describe("Subagent", () => {
 				expect(record.responseText).toBe("");
 			});
 
-			it("turnBudget reflects state mutations via setTurnBudget", () => {
-				const state = new SubagentState();
-				const record = makeSubagent({ state });
-				state.setTurnBudget({ maxTurns: 10, used: 2, phase: "within" });
-				expect(record.turnBudget).toEqual({ maxTurns: 10, used: 2, phase: "within" });
-			});
-
 			it("activeTools reflects state mutations via addActiveTool", () => {
 				const state = new SubagentState();
 				const record = makeSubagent({ state });
@@ -320,19 +325,17 @@ describe("Subagent", () => {
 		});
 
 		describe("consumption getters", () => {
-			it("consumed defaults to false and consumedAt undefined (delegates to SubagentState)", () => {
+			it("consumed defaults to false and consumedAt undefined", () => {
 				const record = makeSubagent();
 				expect(record.consumed).toBe(false);
 				expect(record.consumedAt).toBeUndefined();
 			});
 
-			it("markConsumed delegates to SubagentState", () => {
-				const state = new SubagentState({ status: "completed" });
-				const record = makeSubagent({ state });
+			it("markConsumed records the current run's collection", () => {
+				const record = makeSubagent({ status: "completed" });
 				record.markConsumed(5000);
 				expect(record.consumed).toBe(true);
 				expect(record.consumedAt).toBe(5000);
-				expect(state.consumedAt).toBe(5000);
 			});
 		});
 
@@ -383,16 +386,14 @@ describe("Subagent", () => {
 			});
 
 			it("buffers the message and returns a buffered outcome when the session is not ready", async () => {
-				const agent = makeSubagent();
-				agent.markRunning(Date.now());
+				const agent = makeSubagent({ status: "running" });
 				const outcome = await agent.steer("hello");
 				expect(outcome).toEqual({ kind: "buffered" });
 				expect(agent.pendingSteerCount).toBe(1);
 			});
 
 			it("delivers to the session and returns a delivered outcome when the session is ready", async () => {
-				const agent = makeSubagent();
-				agent.markRunning(Date.now());
+				const agent = makeSubagent({ status: "running" });
 				const stub = createSubagentSessionStub();
 				agent.subagentSession = toSubagentSession(stub);
 				const outcome = await agent.steer("go faster");
@@ -555,6 +556,17 @@ describe("Subagent", () => {
 			const record = createQueuedAgent({ onRunFinished });
 			record.stopQueued();
 			expect(onRunFinished).toHaveBeenCalledExactlyOnceWith(record, "initial");
+		});
+
+		it("ends a resume stopped before its slot opened as a resume", () => {
+			const onRunFinished = vi.fn();
+			const { agent } = createResumableAgent({ observer: { onRunFinished } });
+			void agent.resume("continue", { background: true }, gatedScheduler().schedule);
+
+			agent.stopQueued();
+
+			expect(onRunFinished).toHaveBeenCalledExactlyOnceWith(agent, "resume");
+			expect([agent.status, agent.stoppedWhileQueued]).toEqual(["stopped", true]);
 		});
 
 		it("leaves stoppedWhileQueued false for a running agent aborted mid-run", () => {
@@ -793,6 +805,18 @@ describe("Subagent", () => {
 			expect(createTestSubagent({ status: "queued" }).resumeRefusal).toBe("no-session");
 		});
 
+		it("refuses a second resume while one waits for a slot, until that run settles", async () => {
+			const { agent } = createResumableAgent();
+			const { schedule, openSlot } = gatedScheduler();
+			void agent.resume("continue", { background: true }, schedule);
+
+			expect(agent.resumeRefusal).toBe("resume-queued");
+
+			openSlot();
+			await agent.promise;
+			expect(agent.resumeRefusal).toBeUndefined();
+		});
+
 		it("reports session-released once the retention sweep has freed the session", async () => {
 			const agent = createRunnableAgent();
 			await agent.run();
@@ -853,7 +877,7 @@ describe("Subagent", () => {
 		it("holds the addendum a failed resume's disposal reported", async () => {
 			const { agent, stub } = await heldWorkspaceAgent();
 			stub.runTurnLoop.mockRejectedValue(new Error("resume exploded"));
-			await agent.resume("the answer");
+			await agent.resume("the answer", { background: true });
 			expect(agent.status).toBe("error");
 			expect(agent.workspaceNotice).toBe(ADDENDUM);
 		});
@@ -954,7 +978,7 @@ describe("Subagent", () => {
 		it("does not announce for a failed resume, whose own notification carries it", async () => {
 			const { agent, stub, onWorkspaceNotice } = await heldAgentWithObserver();
 			stub.runTurnLoop.mockRejectedValue(new Error("resume exploded"));
-			await agent.resume("the answer");
+			await agent.resume("the answer", { background: true });
 			expect(agent.workspaceNotice).toBe(ADDENDUM);
 			expect(onWorkspaceNotice).not.toHaveBeenCalled();
 		});
@@ -1017,7 +1041,7 @@ describe("Subagent", () => {
 				return Promise.reject(new Error("boom"));
 			});
 
-			await agent.resume("continue");
+			await agent.resume("continue", { background: true });
 
 			expect(agent.status).toBe("error");
 			expect(agent.pendingQuestion).toBeUndefined();
@@ -1122,8 +1146,7 @@ describe("Subagent", () => {
 					getRunConfig: () => updatesOn,
 				});
 				await agent.run();
-				agent.claim();
-				await agent.resume("keep going");
+				await agent.resume("keep going", { background: false, claimOutcome: true });
 
 				notify("The premise is wrong.");
 
@@ -1186,11 +1209,8 @@ describe("Subagent", () => {
 	describe("scheduleVia(): eager promise capture", () => {
 		it("exposes the scheduler promise before the run starts (queued-awaitable)", async () => {
 			const agent = makeSubagent({ status: "queued" });
-			const { promise: gate, resolve: openSlot } = Promise.withResolvers<void>(); // eslint-disable-line @typescript-eslint/no-invalid-void-type -- Promise.withResolvers<void> is valid; rule does not allow void in generic fn call type args
-			agent.scheduleVia(async (thunk) => {
-				await gate;
-				await thunk();
-			});
+			const { schedule, openSlot } = gatedScheduler();
+			agent.scheduleVia(schedule);
 			// Promise is captured at schedule time — before the slot opens.
 			expect(agent.promise).toBeInstanceOf(Promise);
 			expect(agent.status).toBe("queued");
@@ -1217,43 +1237,40 @@ describe("Subagent", () => {
 	describe("waitUntilSettled()", () => {
 		it("resolves immediately, unsettled, for an agent that has no run handle", async () => {
 			const agent = makeSubagent({ status: "queued" });
-			await expect(agent.waitUntilSettled(new AbortController().signal)).resolves.toEqual({ kind: "unsettled" });
+			const run = await agent.waitUntilSettled(new AbortController().signal);
+			expect([run.status, run.isActive()]).toEqual(["queued", true]);
 		});
 
 		it("resolves immediately for an agent that already left the active set", async () => {
 			const agent = makeSubagent({ status: "completed", result: "done", startedAt: 1, completedAt: 2 });
 			agent.start();
 			await agent.promise;
-			await expect(agent.waitUntilSettled(new AbortController().signal)).resolves.toEqual({ kind: "settled" });
+			const run = await agent.waitUntilSettled(new AbortController().signal);
+			expect([run.status, run.isActive()]).toEqual(["completed", false]);
 		});
 
 		it("spans the queue slot and the run that follows it", async () => {
 			const agent = makeSubagent({ status: "queued" });
-			const { promise: gate, resolve: openSlot } = Promise.withResolvers<void>(); // eslint-disable-line @typescript-eslint/no-invalid-void-type -- Promise.withResolvers<void> is valid; rule does not allow void in generic fn call type args
-			agent.scheduleVia(async (thunk) => {
-				await gate;
-				await thunk();
-			});
+			const { schedule, openSlot } = gatedScheduler();
+			agent.scheduleVia(schedule);
 
 			const wait = agent.waitUntilSettled(new AbortController().signal);
 			openSlot();
 
-			await expect(wait).resolves.toEqual({ kind: "settled" });
+			const run = await wait;
+			expect([run.status, run.isActive(), run.replaced]).toEqual(["completed", false, false]);
 			expect(agent.status).toBe("completed");
 		});
 
 		it("ends the wait on interrupt without cancelling the agent", async () => {
 			const agent = makeSubagent({ status: "queued" });
-			const { promise: gate, resolve: openSlot } = Promise.withResolvers<void>(); // eslint-disable-line @typescript-eslint/no-invalid-void-type -- Promise.withResolvers<void> is valid; rule does not allow void in generic fn call type args
-			agent.scheduleVia(async (thunk) => {
-				await gate;
-				await thunk();
-			});
+			const { schedule, openSlot } = gatedScheduler();
+			agent.scheduleVia(schedule);
 			const controller = new AbortController();
 
 			const wait = agent.waitUntilSettled(controller.signal);
 			controller.abort();
-			await expect(wait).resolves.toEqual({ kind: "unsettled" });
+			expect((await wait).isActive()).toBe(true);
 
 			// Interrupting the query must not cancel the work: the agent is still
 			// queued and still runs once its slot opens.
@@ -1267,7 +1284,7 @@ describe("Subagent", () => {
 			const agent = makeSubagent({ status: "queued" });
 			agent.scheduleVia(() => new Promise<never>(() => {}));
 
-			await expect(agent.waitUntilSettled(AbortSignal.abort())).resolves.toEqual({ kind: "unsettled" });
+			expect((await agent.waitUntilSettled(AbortSignal.abort())).isActive()).toBe(true);
 
 			expect(agent.status).toBe("queued");
 		});
@@ -1283,17 +1300,43 @@ describe("Subagent", () => {
 				execution: makeStubExecution({
 					createSubagentSession: async () => toSubagentSession(stub),
 					// Resumes the moment the run settles, before the waiter continues.
-					observer: { onRunFinished: (a, kind) => { if (kind === "initial") void a.resume("continue"); } },
+					observer: { onRunFinished: (a, kind) => { if (kind === "initial") void a.resume("continue", { background: true }); } },
 				}),
 			});
 			agent.start();
 
-			const wait = await agent.waitUntilSettled(new AbortController().signal);
+			const run = await agent.waitUntilSettled(new AbortController().signal);
 
-			expect(wait.kind).toBe("superseded");
-			expect(wait.kind === "superseded" ? [wait.outcome.status, wait.outcome.result] : undefined)
-				.toEqual(["completed", "first result"]);
+			expect([run.status, run.result, run.replaced]).toEqual(["completed", "first result", true]);
+			expect(agent.status).toBe("running");
 			resumed.resolve(turnLoopResult({ responseText: "second" }));
+			await agent.promise;
+		});
+
+		it("reports the waited run's outcome even when two resumes replaced it", async () => {
+			const stub = createSubagentSessionStub();
+			const third = Promise.withResolvers<TurnLoopResult>();
+			stub.runTurnLoop
+				.mockResolvedValueOnce(turnLoopResult({ responseText: "first result" }))
+				.mockResolvedValueOnce(turnLoopResult({ responseText: "second result" }))
+				.mockReturnValueOnce(third.promise);
+			const agent = makeSubagent({
+				status: "running",
+				execution: makeStubExecution({
+					createSubagentSession: async () => toSubagentSession(stub),
+					// Two resumes, each the moment the run before it settles.
+					observer: { onRunFinished: (a) => { if (stub.runTurnLoop.mock.calls.length < 3) void a.resume("continue", { background: true }); } },
+				}),
+			});
+			agent.start();
+
+			const run = await agent.waitUntilSettled(new AbortController().signal);
+
+			// The waiter holds the first run, whatever ran after it.
+			expect(stub.runTurnLoop).toHaveBeenCalledTimes(3);
+			expect([run.status, run.result, run.replaced, agent.status])
+				.toEqual(["completed", "first result", true, "running"]);
+			third.resolve(turnLoopResult({ responseText: "third" }));
 			await agent.promise;
 		});
 	});
@@ -1334,7 +1377,7 @@ describe("Subagent", () => {
 			stub.runTurnLoop.mockResolvedValue(turnLoopResult({ responseText: "Used the project config. Done." }));
 			expect(agent.pendingQuestion).toBe("Which config?");
 
-			await agent.resume("The project one.");
+			await agent.resume("The project one.", { background: true });
 
 			expect(stub.runTurnLoop).toHaveBeenLastCalledWith("The project one.", expect.objectContaining({ signal: expect.any(AbortSignal) }));
 			expect(agent.status).toBe("completed");
@@ -1350,7 +1393,7 @@ describe("Subagent", () => {
 				return Promise.resolve(turnLoopResult({ responseText: "Thanks." }));
 			});
 
-			await agent.resume("The project one.");
+			await agent.resume("The project one.", { background: true });
 
 			expect(agent.pendingQuestion).toBe("And the fallback?");
 			expect(agent.result).toBe("Thanks.");
@@ -1423,7 +1466,7 @@ describe("Subagent", () => {
 					return Promise.resolve(turnLoopResult({ responseText: "" }));
 				});
 
-				await agent.resume("continue", firedSignal());
+				await agent.resume("continue", { background: true, signal: firedSignal() });
 
 				expect(abortedAtEntry).toBe(true);
 				expect(agent.status).toBe("stopped");
@@ -1572,7 +1615,7 @@ describe("Subagent", () => {
 			await agent.run();
 			expect(agent.status).toBe("completed");
 
-			await agent.resume("and now the other half");
+			await agent.resume("and now the other half", { background: true });
 
 			expect(agent.status).toBe("error");
 			expect(agent.error).toBe("503 upstream unavailable");
@@ -1665,10 +1708,9 @@ describe("Subagent", () => {
 			});
 
 			it("flushes pending steers when session is created", async () => {
-				const agent = createRunnableAgent();
 				// A steer arriving while the agent is running but the session is not yet
 				// ready buffers; run() flushes it once the session is created.
-				agent.markRunning(Date.now());
+				const agent = createRunnableAgent({ status: "running" });
 				void agent.steer("hurry up");
 				expect(agent.pendingSteerCount).toBe(1);
 				await agent.run();
@@ -1783,7 +1825,7 @@ describe("Subagent", () => {
 					return Promise.resolve(turnLoopResult({ responseText: "Partway.", turnBudget: WARNED }));
 				});
 
-				await agent.resume("The project one.");
+				await agent.resume("The project one.", { background: true });
 
 				expect(agent.status).toBe("completed");
 				expect(workspace.dispose).not.toHaveBeenCalled();
@@ -1861,13 +1903,204 @@ describe("Subagent", () => {
 		});
 	});
 
+	describe("a run's mode", () => {
+		it.for([true, false])("a record with no run yet reads the spawn's mode (background: %s)", (isBackground) => {
+			expect(makeSubagent({ isBackground }).isBackground).toBe(isBackground);
+		});
+
+		it.for([true, false])("the initial run takes the spawn's mode (background: %s)", async (isBackground) => {
+			const agent = createRunnableAgent({ isBackground });
+			await agent.run();
+			expect(agent.isBackground).toBe(isBackground);
+		});
+
+		it.for([
+			{ spawned: "foreground", background: true },
+			{ spawned: "background", background: false },
+		])(
+			"a resume of an agent spawned in the $spawned takes the mode it starts with (background: $background)",
+			async ({ background }) => {
+				const { agent, stub } = createResumableAgent({ isBackground: !background });
+				const turnLoop = Promise.withResolvers<TurnLoopResult>();
+				stub.runTurnLoop.mockReturnValue(turnLoop.promise);
+
+				const resumed = agent.resume("continue", { background });
+				expect(agent.isBackground).toBe(background);
+
+				turnLoop.resolve(turnLoopResult({ responseText: "done" }));
+				await resumed;
+				expect(agent.status).toBe("completed");
+				expect(agent.isBackground).toBe(background);
+			},
+		);
+	});
+
+	describe("a run's start", () => {
+		it("counts as progress for the initial run", () => {
+			const agent = createRunnableAgent({ createSubagentSession: () => new Promise<never>(() => {}) });
+			const now = vi.spyOn(Date, "now").mockReturnValue(5000);
+
+			void agent.run();
+
+			now.mockRestore();
+			expect([agent.status, agent.startedAt, agent.lastProgressAt]).toEqual(["running", 5000, 5000]);
+		});
+
+		it("counts as progress for a resume", () => {
+			const { agent, stub } = createResumableAgent();
+			const loop = Promise.withResolvers<TurnLoopResult>();
+			stub.runTurnLoop.mockReturnValue(loop.promise);
+			const now = vi.spyOn(Date, "now").mockReturnValue(5000);
+
+			void agent.resume("continue", { background: true });
+
+			now.mockRestore();
+			expect([agent.status, agent.startedAt, agent.lastProgressAt]).toEqual(["running", 5000, 5000]);
+			loop.resolve(turnLoopResult({ responseText: "second" }));
+		});
+
+		it("leaves a late completion of an aborted run on that run, not on the resume that replaced it", async () => {
+			const { factory, stub } = createFactory();
+			// The first loop ignores its lever and returns only once released, after the
+			// resume has started; the resume's loop stays in flight.
+			const first = Promise.withResolvers<TurnLoopResult>();
+			const second = Promise.withResolvers<TurnLoopResult>();
+			stub.runTurnLoop.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
+			const agent = createRunnableAgent({ createSubagentSession: factory });
+			const initial = agent.run();
+			await vi.waitFor(() => expect(stub.runTurnLoop).toHaveBeenCalledOnce());
+			agent.abort();
+			void agent.resume("continue", { background: true });
+
+			first.resolve(turnLoopResult({ responseText: "late answer" }));
+			await initial;
+
+			expect([agent.status, agent.result]).toEqual(["running", undefined]);
+			second.resolve(turnLoopResult({ responseText: "resumed answer" }));
+			await agent.promise;
+		});
+	});
+
 	describe("a resume", () => {
+		describe("delivery", () => {
+			it("starts unconsumed after the parent collected the run before it", async () => {
+				const { agent } = createResumableAgent();
+				agent.markConsumed(5000);
+
+				await agent.resume("continue", { background: true });
+
+				expect([agent.consumed, agent.consumedAt]).toEqual([false, undefined]);
+			});
+
+			it("starts with no updates owed, whatever the run before it still owed", async () => {
+				const { factory, notify } = createFactory();
+				// No run config: the update channel defaults to on.
+				const agent = createRunnableAgent({ createSubagentSession: factory });
+				await agent.run();
+				notify("From the first run.");
+				expect(agent.runUpdates).toEqual(["From the first run."]);
+
+				await agent.resume("continue", { background: true });
+
+				expect(agent.runUpdates).toEqual([]);
+			});
+
+			it("a claim on a settled run does not claim the resume that follows it", async () => {
+				const { agent } = createResumableAgent();
+				agent.claim();
+
+				await agent.resume("continue", { background: true });
+
+				expect(agent.claimed).toBe(false);
+			});
+
+			it("is born claimed when its caller carries the outcome", () => {
+				const { agent, stub } = createResumableAgent();
+				const loop = Promise.withResolvers<TurnLoopResult>();
+				stub.runTurnLoop.mockReturnValue(loop.promise);
+
+				void agent.resume("continue", { background: false, claimOutcome: true });
+
+				expect(agent.claimed).toBe(true);
+				loop.resolve(turnLoopResult({ responseText: "second" }));
+			});
+		});
+
+		describe("admission", () => {
+			it("waits as the resume's own queued run until admitted", async () => {
+				const started: RunKind[] = [];
+				const { agent, stub } = createResumableAgent({
+					isBackground: false,
+					observer: { onRunStarted: (_agent, kind) => { started.push(kind); } },
+				});
+				stub.runTurnLoop.mockResolvedValue(turnLoopResult({ responseText: "second" }));
+				const { schedule, openSlot } = gatedScheduler();
+
+				void agent.resume("continue", { background: true }, schedule);
+
+				expect([agent.status, agent.isBackground]).toEqual(["queued", true]);
+				expect(agent.promise).toBeInstanceOf(Promise);
+				expect(stub.runTurnLoop).not.toHaveBeenCalled();
+				expect(started).toEqual([]);
+
+				openSlot();
+				await agent.promise;
+
+				expect([agent.status, agent.result]).toEqual(["completed", "second"]);
+				expect(stub.runTurnLoop).toHaveBeenCalledExactlyOnceWith("continue", expect.anything());
+				expect(started).toEqual(["resume"]);
+			});
+
+			it("is born claimed while it waits, when the caller claims it", async () => {
+				const { agent } = createResumableAgent();
+				const { schedule, openSlot } = gatedScheduler();
+
+				void agent.resume("continue", { background: true, claimOutcome: true }, schedule);
+
+				expect([agent.status, agent.claimed]).toEqual(["queued", true]);
+				openSlot();
+				await agent.promise;
+			});
+
+			it("never runs a resume stopped before its slot opened", async () => {
+				const { agent, stub } = createResumableAgent();
+				const { schedule, openSlot } = gatedScheduler();
+				void agent.resume("continue", { background: true }, schedule);
+
+				agent.stopQueued();
+				openSlot();
+				await agent.promise;
+
+				expect(stub.runTurnLoop).not.toHaveBeenCalled();
+				expect(agent.status).toBe("stopped");
+			});
+
+			it("runs only the resume that replaced a stopped one", async () => {
+				const { agent, stub } = createResumableAgent();
+				const secondLoop = Promise.withResolvers<TurnLoopResult>();
+				stub.runTurnLoop.mockReturnValue(secondLoop.promise);
+				const first = gatedScheduler();
+				const firstQueued = agent.resume("first answer", { background: true }, first.schedule);
+				agent.stopQueued();
+
+				// The first resume's slot opens while the second is still running, so the
+				// record is active again when the stale thunk is admitted.
+				const second = agent.resume("second answer", { background: true });
+				first.openSlot();
+				secondLoop.resolve(turnLoopResult({ responseText: "second answer done" }));
+				await Promise.all([firstQueued, second]);
+
+				expect(stub.runTurnLoop).toHaveBeenCalledExactlyOnceWith("second answer", expect.anything());
+				expect([agent.status, agent.result]).toEqual(["completed", "second answer done"]);
+			});
+		});
+
 		describe("disposing a held workspace", () => {
 			it("disposes when the resumed child answers without asking again", async () => {
 				const { agent, workspace, stub } = await heldWorkspaceAgent();
 				stub.runTurnLoop.mockResolvedValue(turnLoopResult({ responseText: "Used the project config. Done." }));
 
-				await agent.resume("The project one.");
+				await agent.resume("The project one.", { background: true });
 
 				expect(workspace.dispose).toHaveBeenCalledWith({ status: "completed", description: "run test" });
 				expect(agent.result).toBe(`Used the project config. Done.${ADDENDUM}`);
@@ -1880,7 +2113,7 @@ describe("Subagent", () => {
 					return Promise.resolve(turnLoopResult({ responseText: "Thanks." }));
 				});
 
-				await agent.resume("The project one.");
+				await agent.resume("The project one.", { background: true });
 
 				expect(workspace.dispose).not.toHaveBeenCalled();
 				expect(agent.pendingQuestion).toBe("And the fallback?");
@@ -1893,7 +2126,7 @@ describe("Subagent", () => {
 					return Promise.resolve(turnLoopResult({ responseText: "Partway.", turnBudget: EXHAUSTED }));
 				});
 
-				await agent.resume("The project one.");
+				await agent.resume("The project one.", { background: true });
 
 				expect(agent.status).toBe("aborted");
 				expect(workspace.dispose).toHaveBeenCalledWith({ status: "aborted", description: "run test" });
@@ -1904,7 +2137,7 @@ describe("Subagent", () => {
 				const { agent, workspace, stub } = await heldWorkspaceAgent();
 				stub.runTurnLoop.mockRejectedValue(new Error("resume exploded"));
 
-				await expect(agent.resume("The project one.")).resolves.toBeUndefined();
+				await expect(agent.resume("The project one.", { background: true })).resolves.toBeUndefined();
 
 				expect(agent.status).toBe("error");
 				expect(workspace.dispose).toHaveBeenCalledWith({ status: "error", description: "run test" });
@@ -1953,7 +2186,7 @@ describe("Subagent", () => {
 			it("transitions to completed and sets result from the resume response", async () => {
 				const { agent, stub } = createResumableAgent();
 				stub.runTurnLoop.mockResolvedValue(turnLoopResult({ responseText: "resumed" }));
-				await agent.resume("continue");
+				await agent.resume("continue", { background: true });
 				expect(agent.status).toBe("completed");
 				expect(agent.result).toBe("resumed");
 			});
@@ -1966,7 +2199,7 @@ describe("Subagent", () => {
 					loopSignal = signal;
 					return Promise.resolve(turnLoopResult({ responseText: "resumed" }));
 				});
-				await agent.resume("continue", callerSignal);
+				await agent.resume("continue", { background: true, signal: callerSignal });
 				expect(stub.runTurnLoop).toHaveBeenCalledExactlyOnceWith("continue", expect.objectContaining({ signal: expect.any(AbortSignal) }));
 				// The caller's signal is wired through abort(); the loop runs under the
 				// record's own lever, so abort(id) reaches it too.
@@ -1975,7 +2208,7 @@ describe("Subagent", () => {
 
 			it("resets transition state before resuming", async () => {
 				const { agent } = createResumableAgent();
-				await agent.resume("continue");
+				await agent.resume("continue", { background: true });
 				expect(agent.error).toBeUndefined();
 			});
 		});
@@ -1989,7 +2222,7 @@ describe("Subagent", () => {
 					onTurnBudget?.(fresh);
 					return gate.promise;
 				});
-				const resumed = agent.resume("continue");
+				const resumed = agent.resume("continue", { background: true });
 				await vi.waitFor(() => expect(stub.runTurnLoop).toHaveBeenCalled());
 				expect(agent.turnBudget).toEqual(fresh);
 				gate.resolve(turnLoopResult({ turnBudget: fresh }));
@@ -2000,7 +2233,7 @@ describe("Subagent", () => {
 				const onRunFinished = vi.fn();
 				const { agent, stub } = createResumableAgent({ observer: { onRunFinished } });
 				stub.runTurnLoop.mockResolvedValue(turnLoopResult({ responseText: "partial", turnBudget: EXHAUSTED }));
-				await agent.resume("continue");
+				await agent.resume("continue", { background: true });
 				expect(agent.status).toBe("aborted");
 				expect(agent.result).toBe("partial");
 				expect(onRunFinished).toHaveBeenCalledExactlyOnceWith(agent, "resume");
@@ -2012,7 +2245,7 @@ describe("Subagent", () => {
 				const { agent, stub } = createResumableAgent();
 				const loop = parkLoopUntilSignalled(stub.runTurnLoop);
 
-				const resumed = agent.resume("continue");
+				const resumed = agent.resume("continue", { background: true });
 				expect(agent.abort()).toBe(true);
 				await resumed;
 
@@ -2026,7 +2259,7 @@ describe("Subagent", () => {
 				const loop = parkLoopUntilSignalled(stub.runTurnLoop);
 				const caller = new AbortController();
 
-				const resumed = agent.resume("continue", caller.signal);
+				const resumed = agent.resume("continue", { background: true, signal: caller.signal });
 				caller.abort();
 				await resumed;
 
@@ -2045,7 +2278,7 @@ describe("Subagent", () => {
 				expect(first.signal?.aborted).toBe(true);
 				const loop = parkLoopUntilSignalled(stub.runTurnLoop);
 
-				const resumed = agent.resume("continue");
+				const resumed = agent.resume("continue", { background: true });
 				expect(agent.abort()).toBe(true);
 				await resumed;
 
@@ -2064,7 +2297,7 @@ describe("Subagent", () => {
 					return turnLoopResult({ responseText: "second" });
 				});
 				const { agent } = createResumableAgent({ session, stub });
-				await agent.resume("more");
+				await agent.resume("more", { background: true });
 				expect(agent.lifetimeUsage).toEqual({ input: 70, output: 30, cacheWrite: 5 });
 				expect(agent.compactionCount).toBe(1);
 			});
@@ -2081,14 +2314,14 @@ describe("Subagent", () => {
 					return turnLoopResult({ responseText: "second" });
 				});
 				const { agent } = createResumableAgent({ observer, session, stub });
-				await agent.resume("more");
+				await agent.resume("more", { background: true });
 				expect(seen).toEqual([{ reason: "threshold", tokensBefore: 123 }]);
 			});
 
 			it("releases the observer subscription after resume completes", async () => {
 				const session = createMockSession();
 				const { agent } = createResumableAgent({ session });
-				await agent.resume("more");
+				await agent.resume("more", { background: true });
 				// Events emitted after resume must not accumulate — subscription released.
 				session.emit({ type: "tool_execution_end" });
 				expect(agent.toolUses).toBe(0);
@@ -2100,7 +2333,7 @@ describe("Subagent", () => {
 					seen.push({ status: agent.status, completedAt: agent.completedAt });
 				const { agent } = createResumableAgent({ observer: { onRunStarted } });
 
-				await agent.resume("continue");
+				await agent.resume("continue", { background: true });
 
 				// After the rewind, not before it: a subscriber reading the record must see
 				// the run that just started, not the outcome of the one it replaced.
@@ -2117,7 +2350,7 @@ describe("Subagent", () => {
 				const gate = Promise.withResolvers<TurnLoopResult>();
 				stub.runTurnLoop.mockReturnValue(gate.promise);
 
-				const resumed = agent.resume("continue");
+				const resumed = agent.resume("continue", { background: true });
 
 				expect(agent.status).toBe("running");
 				expect(onRunStarted).toHaveBeenCalledExactlyOnceWith(agent, "resume");
@@ -2132,7 +2365,7 @@ describe("Subagent", () => {
 				stub.runTurnLoop.mockRejectedValue(new Error("resume exploded"));
 				const { agent } = createResumableAgent({ observer: { onRunStarted }, stub });
 
-				await agent.resume("continue");
+				await agent.resume("continue", { background: true });
 
 				expect(onRunStarted).toHaveBeenCalledExactlyOnceWith(agent, "resume");
 			});
@@ -2140,7 +2373,7 @@ describe("Subagent", () => {
 			it("fires observer.onRunFinished once the resume completes", async () => {
 				const onRunFinished = vi.fn();
 				const { agent } = createResumableAgent({ observer: { onRunFinished } });
-				await agent.resume("continue");
+				await agent.resume("continue", { background: true });
 				expect(onRunFinished).toHaveBeenCalledExactlyOnceWith(agent, "resume");
 				expect(agent.status).toBe("completed");
 			});
@@ -2150,7 +2383,7 @@ describe("Subagent", () => {
 				const stub = createSubagentSessionStub();
 				stub.runTurnLoop.mockRejectedValue(new Error("resume exploded"));
 				const { agent } = createResumableAgent({ observer: { onRunFinished }, stub });
-				await agent.resume("continue");
+				await agent.resume("continue", { background: true });
 				expect(onRunFinished).toHaveBeenCalledExactlyOnceWith(agent, "resume");
 				expect(agent.status).toBe("error");
 			});
@@ -2161,7 +2394,7 @@ describe("Subagent", () => {
 				const stub = createSubagentSessionStub();
 				stub.runTurnLoop.mockRejectedValue(new Error("resume exploded"));
 				const { agent } = createResumableAgent({ stub });
-				await agent.resume("more");
+				await agent.resume("more", { background: true });
 				expect(agent.status).toBe("error");
 				expect(agent.error).toBe("resume exploded");
 			});
@@ -2171,14 +2404,14 @@ describe("Subagent", () => {
 				const stub = createSubagentSessionStub(session);
 				stub.runTurnLoop.mockRejectedValue(new Error("boom"));
 				const { agent } = createResumableAgent({ session, stub });
-				await agent.resume("more");
+				await agent.resume("more", { background: true });
 				session.emit({ type: "tool_execution_end" });
 				expect(agent.toolUses).toBe(0);
 			});
 
 			it("throws when no session exists", async () => {
 				const agent = makeSubagent();
-				await expect(agent.resume("more")).rejects.toThrow(/missing session/);
+				await expect(agent.resume("more", { background: true })).rejects.toThrow(/missing session/);
 			});
 		});
 
@@ -2191,7 +2424,7 @@ describe("Subagent", () => {
 				const { promise: resuming, resolve: finishResume } = Promise.withResolvers<TurnLoopResult>();
 				stub.runTurnLoop.mockReturnValue(resuming);
 
-				const returned = agent.resume("continue");
+				const returned = agent.resume("continue", { background: true });
 
 				// The getter must track the live resume, not the settled first-run handle.
 				expect(agent.promise).not.toBe(firstRun);

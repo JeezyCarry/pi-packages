@@ -1270,6 +1270,81 @@ describe("service and chain share one authorizer registry", () => {
   });
 });
 
+describe("the nothing-on-disk license reaches the delegation envelope", () => {
+  // End to end through the bash gate, the escalation, the chain, and the
+  // envelope: an allowing link is honored on a bash external_directory ask only
+  // when every flagged path names nothing on disk (ADR 0007, amendment 8).
+  async function askThroughAllowingLink(
+    command: string,
+  ): Promise<{ block?: true; titles: string[]; cwd: string }> {
+    writeGlobalConfig({
+      permission: { "*": "allow", external_directory: { "*": "ask" } },
+      authorizerChain: ["allowing-judge"],
+    });
+    const cwd = mkdtempSync(join(tmpdir(), "pi-perm-license-cwd-"));
+    const pi = makeFakePi({ toolNames: ["bash"] });
+    piPermissionSystemExtension(pi as unknown as ExtensionAPI);
+    const titles: string[] = [];
+    const { ctx } = makeUiCtx(cwd, titles);
+    await fireSessionStart(pi, ctx);
+    getPermissionsService("ui-session")!.registerAuthorizer(
+      "allowing-judge",
+      () => Promise.resolve({ kind: "allow" }),
+    );
+    const result = (await pi.fire(
+      "tool_call",
+      { toolName: "bash", toolCallId: "b-1", input: { command } },
+      ctx,
+    )) as { block?: true };
+    return { block: result.block, titles, cwd };
+  }
+
+  it("lets the link's allow stand when the operand names nothing on disk", async () => {
+    const { block, titles, cwd } = await askThroughAllowingLink(
+      "officecli set data.xlsx /pi-permission-882-absent/Sheet1/B1",
+    );
+
+    expect(block).toBeUndefined();
+    expect(titles).toEqual([]);
+    const entries = readReviewLog() as Record<string, unknown>[];
+    const licensed = entries.filter(
+      (entry) => entry.event === "authorizer_allow_licensed",
+    );
+    expect(licensed).toHaveLength(1);
+    expect(licensed[0]).toMatchObject({
+      link: "allowing-judge",
+      license: "nothing-on-disk",
+    });
+    const approved = entries.find(
+      (entry) => entry.event === "permission_request.approved",
+    );
+    expect(approved?.requestId).toBe(licensed[0].requestId);
+    expect(approved?.decidedBy).toMatchObject({
+      kind: "authorizer",
+      name: "allowing-judge",
+    });
+
+    rmSync(cwd, { recursive: true, force: true });
+  });
+
+  it("still prompts when the operand sits under an existing directory", async () => {
+    const { block, titles, cwd } = await askThroughAllowingLink(
+      `cat ${join(tmpdir(), "pi-permission-882-absent", "x")}`,
+    );
+
+    // The envelope capped the link's allow, so the ask reached the human.
+    expect(block).toBeUndefined();
+    expect(titles).toHaveLength(1);
+    expect(
+      readReviewLog().filter(
+        (entry) => entry.event === "authorizer_allow_licensed",
+      ),
+    ).toEqual([]);
+
+    rmSync(cwd, { recursive: true, force: true });
+  });
+});
+
 describe("ready emitted after service publication", () => {
   // Ordering contracts exist only at the composition root: a consumer reacting
   // to permissions:ready must be able to resolve the service immediately. The

@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [41.0.0](https://github.com/gotgenes/pi-packages/compare/pi-permission-system-v40.3.0...pi-permission-system-v41.0.0) (2026-10-17)
+
+
+### Features
+
+* **pi-permission-system:** **breaking:** let a chain link allow a bash external_directory ask whose paths name nothing on disk ([5710156](https://github.com/gotgenes/pi-packages/commit/571015663a3f4d1aae1a0dd31a13e89d146212b6)), closes [#882](https://github.com/gotgenes/pi-packages/issues/882)
+
+### Documentation
+
+* **pi-permission-system:** document the nothing-on-disk delegation license ([84c231e](https://github.com/gotgenes/pi-packages/commit/84c231e8484684424cf0bc582a468c1fb2f3262e)), closes [#882](https://github.com/gotgenes/pi-packages/issues/882)
+* **pi-permission-system:** state the root and shell-expansion limits of the nothing-on-disk license ([2dae4d6](https://github.com/gotgenes/pi-packages/commit/2dae4d680f90efe4503882ac5ac57fefa58b931d)), closes [#882](https://github.com/gotgenes/pi-packages/issues/882)
+* **pi-permission-system:** state the whole-parse condition and the unflagged-operand residual of the nothing-on-disk license ([d973795](https://github.com/gotgenes/pi-packages/commit/d973795bf753019fc83cdab4fdfb4d8504824c8e)), closes [#882](https://github.com/gotgenes/pi-packages/issues/882)
+* **pi-permission-system:** describe the verbatim-spelling rule of the nothing-on-disk license ([94580dc](https://github.com/gotgenes/pi-packages/commit/94580dc752c3d2ca699bf4c3569bbf90eb6d4828)), closes [#882](https://github.com/gotgenes/pi-packages/issues/882)
+* **pi-permission-system:** require the nothing-on-disk license's token to stand alone as a whole word ([afd9ec7](https://github.com/gotgenes/pi-packages/commit/afd9ec7a690ab7e7e5550ce720d0b39268250092)), closes [#882](https://github.com/gotgenes/pi-packages/issues/882)
+* **pi-permission-system:** name bash's own word boundaries and the trimmed trailing carriage return ([3c5d45e](https://github.com/gotgenes/pi-packages/commit/3c5d45eca1c8b8c70cc367a31f2f3dbe37345bb1)), closes [#882](https://github.com/gotgenes/pi-packages/issues/882)
+* **pi-permission-system:** note the escaped-boundary rule and the resolver's source argument ([526c19e](https://github.com/gotgenes/pi-packages/commit/526c19eaa4e6bf1834e6d96f37945f53c5aba6a7)), closes [#882](https://github.com/gotgenes/pi-packages/issues/882)
+
 ## [40.3.0](https://github.com/gotgenes/pi-packages/compare/pi-permission-system-v40.2.2...pi-permission-system-v40.3.0) (2026-10-17)
 
 

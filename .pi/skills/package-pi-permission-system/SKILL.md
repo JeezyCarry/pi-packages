@@ -64,6 +64,8 @@ Run `pnpm --silent fallow guard <file>` before adding a cross-directory import: 
 - Prefer config patterns over new runtime mechanisms.
   Mechanism is forever; docs are reversible.
 - Treat any declared config field not read at runtime as a maintenance trap.
+- A fact that *relieves* an ask (a license, an exemption) is never read off the bash projection, which over-flags by design.
+  Require a positive condition the source proves (the token is the verbatim word bash runs, ADR 0007 §8), and list in the plan the inputs the bound must refuse before the pre-completion reviewer does.
 
 ### Single source of truth for tool policy
 
@@ -116,6 +118,7 @@ The `permission` object uses deep-shallow merge; scalar fields use simple replac
 - Keep `config-schema.ts`, example config, `docs/configuration.md`, and `README.md` aligned when the config shape changes — the schema and the config types are both derived from `config-schema.ts`, so it is the one edit point.
 - `docs/architecture/architecture.md` inline-copies the core `rule.ts` types (`Rule`, `RuleOrigin`, `Ruleset`).
   Adding or removing a field on one of these must update that listing too — a module-move check misses it, and only the pre-completion reviewer catches it otherwise.
+- `docs/cross-extension-api.md` tables every `PromptRequestFacts` field; a new field gets a row there in the same change.
 - Config **files** are validated strictly against `unifiedConfigSchema` (`config-schema.ts`) and rejected **fail-closed** on any invalid field (empty scope → universal `ask`), with a clear per-issue message.
   A rejected **non-global** scope (project / agent / project-agent) additionally floors the composed policy `allow`→`ask` (origin `fail-closed`) at composition, so a lower scope's `allow` cannot be silently inherited behind an invalid higher scope; `deny` is preserved, global is excluded, and `yoloMode` re-permits the floored `ask`.
   The loader marks such a scope `ScopeConfig.invalid` (a present-but-unloadable file; an absent file stays a plain empty scope); the manager reads the flags in `resolvePermissions` and appends a fail-closed notice to `getPolicyIssues`.

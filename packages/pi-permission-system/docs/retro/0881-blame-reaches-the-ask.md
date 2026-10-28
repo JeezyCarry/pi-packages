@@ -109,3 +109,63 @@ The plan's marker is `**Release:** ship now — batch "declared-effects" tail (t
   The judge has no architecture doc, so there is no open phase and `roadmap-fit` recorded nothing.
 - The judge-fixture fix belongs with the bump of the judge's `27.0.0` devDependency pin, since adding the fields earlier is an excess-property error against that version.
   It does not block this release.
+
+## Stage: Final Retrospective (2026-10-17T02:31:30Z)
+
+### Session summary
+
+One peer session in the worktree planned, implemented, and synced the change: one `refactor:`, two `fix:` commits, one `test:`, and two `docs:` commits.
+The root `/ship` fast-forward-merged it and released `pi-permission-system` 40.3.0, which carried [#880]'s deferred `feat:` as the tail of the "declared-effects" batch.
+It closed #881 and tore down the worktree; the ship needed no recovery step.
+
+### Observations
+
+#### What went well
+
+- Planning measured the defect against the real review log before the decision gate (331 asks with no path, 0 entries with an `effect` key, 48% of directional asks on the bare family), so the gate led with what the user sees.
+- The per-step mutation discipline found a wrong plan prediction: the `permission-ui-prompt.test.ts` verbatim-core test pins the bus pass-through, not the reader.
+  It also proved each of the three runner arms separately with an `it.each` plus a session-arm-only mutation.
+- The sync stage settled the reviewer's carried warning by filing [#1077] instead of passing it to `/ship`, so the root close comment could cite it without asking.
+
+#### What caused friction (agent side)
+
+- `instruction-violation` (self-identified once, of nine) — the peer batched an `Edit`/`Write` with a call that reads, runs, copies, or rewrites the same file in about nine batches, which the `AGENTS.md` `### Tool-injected messages` rule forbids.
+  Three failed visibly:
+  - a `Read` and `Edit` of `src/handlers/gates/tool.ts` in one batch, where the edit errored;
+  - an `Edit` of `docs/cross-extension-api.md` batched with `rumdl check` on it, which errored on the unformatted file;
+  - the runner green-copy `cp` batched with the mutating `Edit`, the one the TDD note records.
+  The others passed silently:
+  - `Edit` + `vitest run …; cp` on `dialog-renderer.ts`;
+  - `Edit` + `Read` on `path-ask-payload.ts`;
+  - an `Edit` and a Python rewrite of `bash-path.ts` in one batch;
+  - `Edit` + `vitest` on `review-log-renderer.ts`;
+  - `Edit` + `grep`/`rumdl` on ADR 0013.
+  Impact: about four extra calls and one re-run mutation; no rework landed, but a silent green-copy capture is the failure no gate reports.
+  This is the recurrence the `packages/pi-subagents/docs/retro/1050-one-run-lifecycle.md` retro predicted when it promoted the rule from `/tdd-plan` to `AGENTS.md` (21 of 29 mutation batches there); moving the prose did not change the rate.
+- `missing-context` — planning listed no `docs/cross-extension-api.md` update, though that file tables every `PromptRequestFacts` field.
+  The plan prompt's docs grep fires on a *removed* public symbol, not an added field.
+  Impact: the first pre-completion review returned WARN, which cost one `docs:` commit and a second reviewer dispatch.
+- `premature-convergence` — the operator's gate answer mentioned a "Pi 1.3.0 tool" change; the agent took it to mean `ToolCall.argumentsError` and spent about seven calls diffing `v1.2.0..v1.3.0` before the operator corrected it to 1.2.0's `reachesTools`.
+  Impact: about seven calls; the analysis was sound but answered the wrong question.
+- `other` — non-ASCII emission recurred: two `Edit` attempts spanning a `§`/`—` comment failed (resolved with a line-anchored script), and the sync note wrote a literal `\u2014` inside a code span, which the escape gate exempts.
+  Impact: about five calls; both self-caught with the scans `markdown-conventions` prescribes.
+- `instruction-violation` (deny rule) — TDD ran `cd packages/pi-permission-system/test && perl …`; the permission deny rule rejected it and the retry used a path variable.
+  Impact: one call; the rule worked as designed.
+
+#### What caused friction (user side)
+
+- The "Pi 1.3.0 tool" note named a version and not the field; naming `reachesTools` up front would have saved the detour.
+  Equally, the agent could have asked which change was meant instead of guessing.
+
+### Diagnostic details
+
+- **Model-performance correlation** — planning and TDD ran on `claude-opus-5-5` (thinking high), sync on `claude-sonnet-5-5`, and this root ship and retro on `claude-opus-5-5`.
+  All three subagents (the `tidy-first-assessor` and two `pre-completion-reviewer` rounds) ran on `claude-sonnet-5-5`; the assessor caught a real type mismatch (`TokenEffect` vs. flat `effect`) and the reviewer caught the `cross-extension-api.md` omission, so the cheaper model was adequate for both judgment tasks.
+- **Feedback-loop gap analysis** — verification ran incrementally: targeted `vitest` per Red/Green, a mutation per pin, `check` after each shared-type change, and the full suite before every commit.
+  No gap.
+
+### Changes made
+
+1. `.pi/skills/package-pi-permission-system/SKILL.md` (`## Configuration`): added a bullet that `docs/cross-extension-api.md` tables every `PromptRequestFacts` field, so a new field gets a row in the same change.
+
+The proposed `scope:repo` issue to run a batch containing `edit`/`write` sequentially (Pi's per-tool `executionMode: "sequential"`) was declined; the batching recurrence stays recorded above.

@@ -13,9 +13,9 @@ import { debugLog } from "#src/debug";
 import type { CreateSubagentSessionParams } from "#src/lifecycle/create-subagent-session";
 import type { ParentSnapshot } from "#src/lifecycle/parent-snapshot";
 import { subscribeSubagentObserver } from "#src/lifecycle/record-observer";
-import { type RunKind, SubagentRun } from "#src/lifecycle/subagent-run";
+import { type CarrierClaim, type RunKind, type RunOutcome, type RunOutcomeInit, SubagentRun } from "#src/lifecycle/subagent-run";
 import type { SubagentSession, TurnLoopResult } from "#src/lifecycle/subagent-session";
-import { type CarrierClaim, type SettledOutcome, SubagentState, type SubagentStatus } from "#src/lifecycle/subagent-state";
+import { SubagentState, type SubagentStatus } from "#src/lifecycle/subagent-state";
 import type { TurnBudget } from "#src/lifecycle/turn-limits";
 import type { LifetimeUsage } from "#src/lifecycle/usage";
 import type { WorkspaceProvider } from "#src/lifecycle/workspace";
@@ -58,11 +58,14 @@ export type { SubagentStatus } from "#src/lifecycle/subagent-state";
  * `sessionReleased`, and `workspaceDisposed`, while the result carriers never
  * consulted any of them and advertised the resume regardless.
  *
- * `still-running` is the one transient member: it is a refusal of *now* rather
- * than of ever, and the carriers word it accordingly.
+ * `still-running` and `resume-queued` are the transient members: each is a
+ * refusal of *now* rather than of ever, clearing when the run in question
+ * settles, and the carriers word them accordingly. `resume-queued` names a
+ * resume waiting for a concurrency slot, which has not started running.
  */
 export type ResumeRefusal =
 	| "still-running"
+	| "resume-queued"
 	| "no-session"
 	| "session-released"
 	| "workspace-disposed";
@@ -76,17 +79,6 @@ export type SteerOutcome =
 	| { kind: "delivered" }
 	| { kind: "buffered" }
 	| { kind: "rejected"; status: SubagentStatus };
-
-/**
- * What happened to the run a `waitUntilSettled` call waited on: it settled and
- * is still the current run; it has not settled (the wait was interrupted, or
- * there was no run to wait on); or a resume replaced it after it settled,
- * carrying what it ended with.
- */
-export type WaitOutcome =
-	| { kind: "settled" }
-	| { kind: "unsettled" }
-	| { kind: "superseded"; outcome: SettledOutcome };
 
 /**
  * The execution machinery a Subagent needs to run. A single mandatory
@@ -114,12 +106,35 @@ export interface SubagentExecution {
 	signal?: AbortSignal;
 }
 
+/**
+ * Runs a run's thunk, now or once admitted; a concurrency limiter's `schedule`
+ * is one. The returned promise settles with the thunk.
+ */
+export type RunScheduler = (thunk: () => Promise<void>) => Promise<void>;
+
+/** What one resume of a subagent is started with. */
+export interface ResumeRunOptions {
+	/**
+	 * Whether the resume runs in the background. The front door that starts it
+	 * decides, so a resume need not run in the mode the agent was spawned in.
+	 */
+	background: boolean;
+	/** Cancels the resumed run through its own lever, ending it like `abort()` does. */
+	signal?: AbortSignal;
+	/**
+	 * The caller will deliver this outcome to the parent, so nothing announces
+	 * it: the resume's run is born claimed. Omitted, the resumed outcome is
+	 * announced like any other completion.
+	 */
+	claimOutcome?: boolean;
+}
+
 export interface SubagentInit {
 	// Identity
 	id: string;
 	type: SubagentType;
 	description: string;
-	/** The mode SubagentManager resolved for this spawn; drives scheduling and announcement. */
+	/** The mode SubagentManager resolved for this spawn: the initial run's, and whether it queues. */
 	isBackground: boolean;
 
 	/** Execution machinery — always supplied; construct-complete, no test fallbacks. */
@@ -127,6 +142,9 @@ export interface SubagentInit {
 
 	/** Lifecycle status and metrics. Defaults to a fresh queued state. */
 	state?: SubagentState;
+
+	/** Seeds for the initial run's outcome; production never passes them. */
+	outcome?: RunOutcomeInit;
 }
 
 export class Subagent {
@@ -134,27 +152,21 @@ export class Subagent {
 	readonly id: string;
 	readonly type: SubagentType;
 	readonly description: string;
-	/**
-	 * Whether this agent runs in the background. Resolved once at the manager
-	 * choke point, so a consumer asks the record rather than re-deriving it from
-	 * a per-call display snapshot only the tool door ever built (#724).
-	 */
-	readonly isBackground: boolean;
 
 	// Lifecycle status and metrics — owned by a private value object; getters and
 	// mutation methods below delegate to it one line.
 	private readonly state: SubagentState;
-	get status(): SubagentStatus { return this.state.status; }
-	get result(): string | undefined { return this.state.result; }
-	get error(): string | undefined { return this.state.error; }
-	get stoppedWhileQueued(): boolean { return this.state.stoppedWhileQueued; }
-	get startedAt(): number { return this.state.startedAt; }
-	get completedAt(): number | undefined { return this.state.completedAt; }
-	get consumedAt(): number | undefined { return this.state.consumedAt; }
-	get consumed(): boolean { return this.state.consumed; }
-	get claimed(): boolean { return this.state.claimed; }
-	get pendingQuestion(): string | undefined { return this.state.pendingQuestion; }
-	get runUpdates(): readonly string[] { return this.state.runUpdates; }
+	get status(): SubagentStatus { return this.currentRun.status; }
+	get result(): string | undefined { return this.currentRun.result; }
+	get error(): string | undefined { return this.currentRun.error; }
+	get stoppedWhileQueued(): boolean { return this.currentRun.stoppedWhileQueued; }
+	get startedAt(): number { return this.currentRun.startedAt; }
+	get completedAt(): number | undefined { return this.currentRun.completedAt; }
+	get consumedAt(): number | undefined { return this.currentRun.consumedAt; }
+	get consumed(): boolean { return this.currentRun.consumed; }
+	get claimed(): boolean { return this.currentRun.claimed; }
+	get pendingQuestion(): string | undefined { return this.currentRun.pendingQuestion; }
+	get runUpdates(): readonly string[] { return this.currentRun.runUpdates; }
 	/**
 	 * What the workspace reported at a teardown with no result text to fold it
 	 * into — the provider's own wording for where the child's work ended up.
@@ -162,21 +174,42 @@ export class Subagent {
 	 * Undefined for a run that completed normally: there the addendum rides the
 	 * result, and duplicating it here would have every carrier report it twice.
 	 */
-	get workspaceNotice(): string | undefined { return this.state.workspaceNotice; }
-	get turnBudget(): TurnBudget | undefined { return this.state.turnBudget; }
+	get workspaceNotice(): string | undefined { return this.currentRun.workspaceNotice; }
+	get turnBudget(): TurnBudget | undefined { return this.currentRun.turnBudget; }
 	get toolUses(): number { return this.state.toolUses; }
 	get lifetimeUsage(): Readonly<LifetimeUsage> { return this.state.lifetimeUsage; }
 	get compactionCount(): number { return this.state.compactionCount; }
 	get activeTools(): ReadonlyMap<string, string> { return this.state.activeTools; }
 	get responseText(): string { return this.state.responseText; }
 	get lastProgressAt(): number { return this.state.lastProgressAt; }
-	isActive(): boolean { return this.state.isActive(); }
-	isTerminalError(): boolean { return this.state.isTerminalError(); }
-	isRunning(): boolean { return this.state.isRunning(); }
-	canBeSteered(): boolean { return this.state.canBeSteered(); }
+	isActive(): boolean { return this.currentRun.isActive(); }
+	isTerminalError(): boolean { return this.currentRun.isTerminalError(); }
+	isRunning(): boolean { return this.currentRun.isRunning(); }
+	canBeSteered(): boolean { return this.currentRun.canBeSteered(); }
 
-	/** The run in flight, or the last one to end; undefined until the first run starts. */
-	private currentRun?: SubagentRun;
+	/**
+	 * The run in flight, or the last one to end. The initial run is born with the
+	 * agent, so a queued agent already has the run it is waiting to start.
+	 */
+	private currentRun: SubagentRun;
+
+	/** The run in flight, or the last one to end, as an outcome carrier reads it. */
+	get latestRun(): RunOutcome {
+		return this.currentRun;
+	}
+
+	/**
+	 * Whether this agent's current run is in the background: the run in flight,
+	 * or the last one to end. The initial run takes the spawn's mode.
+	 *
+	 * Mode is a fact about a run, not the agent, so a resume can change it. The
+	 * record answers rather than a consumer re-deriving it from a per-call
+	 * display snapshot only the tool door ever built (#724).
+	 */
+	get isBackground(): boolean {
+		return this.currentRun.inBackground;
+	}
+
 	private _promise?: Promise<void>;
 	/** Handle on the agent's current run — the initial run, or the live resume that replaced it. */
 	get promise(): Promise<void> | undefined { return this._promise; }
@@ -249,7 +282,8 @@ export class Subagent {
 	 * record whose session was released *and* whose workspace is gone reports the
 	 * session — the door's message for it names the retention window, which is
 	 * the fact that explains both. A live run outranks all of them: nothing about
-	 * a settled record is decided yet.
+	 * a settled record is decided yet. So does a resume still waiting for its
+	 * slot, which would otherwise read resumable a second time.
 	 *
 	 * A getter rather than a predicate method because the result carriers read it
 	 * as a field: `OutcomeAddenda` and `AgentReport` both declare it, and a live
@@ -261,6 +295,9 @@ export class Subagent {
 		// session" does. A queued agent is not running and keeps the no-session
 		// answer, which is the truth about it.
 		if (this.isRunning()) return "still-running";
+		// A resume waiting for its slot holds the live session it will continue, so it
+		// is checked before the session; a queued initial run has none to hold.
+		if (this.status === "queued" && this.currentRun.kind === "resume") return "resume-queued";
 		if (!this.isSessionReady()) return this._sessionReleased ? "session-released" : "no-session";
 		if (this.workspaceDisposed) return "workspace-disposed";
 		return undefined;
@@ -322,7 +359,7 @@ export class Subagent {
 		this.id = init.id;
 		this.type = init.type;
 		this.description = init.description;
-		this.isBackground = init.isBackground;
+		this.currentRun = new SubagentRun("initial", init.isBackground, init.outcome);
 
 		// Lifecycle status and metrics — fresh queued state unless one is supplied
 		this.state = init.state ?? new SubagentState();
@@ -346,9 +383,8 @@ export class Subagent {
 	 * captured internally).
 	 */
 	async run(): Promise<void> {
-		const run = new SubagentRun("initial", this.execution.signal, () => this.abort());
-		this.currentRun = run;
-		this.markRunning(Date.now());
+		const run = this.currentRun;
+		this.startRun(run, this.execution.signal);
 		this.execution.observer?.onRunStarted?.(this, run.kind);
 		// Cancelled before it started: end here, before the workspace and the child
 		// session cost anything.
@@ -385,7 +421,9 @@ export class Subagent {
 				parentSession: this.execution.parentSession,
 				model: this.execution.model,
 				thinkingLevel: this.execution.thinkingLevel,
-				askParent: (question) => { this.state.setPendingQuestion(question); },
+				// The session outlives this run, so a question goes to whichever run is
+				// under way when the child asks it.
+				askParent: (question) => { this.currentRun.setPendingQuestion(question); },
 				notifyParent: this.canSendUpdates(runConfig)
 					? (message) => { this.announceUpdate(message); }
 					: undefined,
@@ -421,7 +459,7 @@ export class Subagent {
 		try {
 			this.complete(run, await session.runTurnLoop(prompt, {
 				signal: run.signal,
-				onTurnBudget: (budget) => { this.state.setTurnBudget(budget); },
+				onTurnBudget: (budget) => { run.setTurnBudget(budget); },
 			}));
 		} catch (err) {
 			this.fail(run, err);
@@ -454,7 +492,9 @@ export class Subagent {
 	 * carrier delivers it.
 	 */
 	private announceUpdate(message: string): void {
-		this.state.recordUpdate(message);
+		// The session outlives this run, so an update joins whichever run is under
+		// way when the child sends it.
+		this.currentRun.recordUpdate(message);
 		this.execution.observer?.onUpdateSent?.(this, message);
 	}
 
@@ -473,7 +513,7 @@ export class Subagent {
 	 * The guard in guardedRun() makes an abort-while-queued run a no-op when the
 	 * slot finally frees.
 	 */
-	scheduleVia(schedule: (thunk: () => Promise<void>) => Promise<void>): void {
+	scheduleVia(schedule: RunScheduler): void {
 		this._promise = schedule(() => this.guardedRun());
 	}
 
@@ -498,18 +538,17 @@ export class Subagent {
 	 * is a query, so interrupting it must not cancel the work. Cancelling the
 	 * work on a parent interrupt is InterruptHandler's separate decision.
 	 *
-	 * Reports what happened to the run the wait began on. A resume can start
-	 * between that run settling and the waiter continuing (a consumer resuming
-	 * from the completion event does), so a record that reads active afterwards
-	 * is not necessarily the run that was waited on.
+	 * Returns the run the wait began on, whatever happened to it: still active
+	 * when the wait was interrupted (or there was nothing to wait on), settled
+	 * otherwise. A resume can start between that run settling and the waiter
+	 * continuing (a consumer resuming from the completion event does); the
+	 * returned run is then `replaced`, and still reports what it ended with.
 	 */
-	async waitUntilSettled(signal: AbortSignal): Promise<WaitOutcome> {
-		const waitedRun = this.state.run;
+	async waitUntilSettled(signal: AbortSignal): Promise<RunOutcome> {
+		const run = this.currentRun;
 		const handle = this._promise;
-		if (handle && this.isActive()) await settleOrAbort(handle, signal);
-		const superseded = this.state.run === waitedRun ? undefined : this.state.supersededOutcome(waitedRun);
-		if (superseded) return { kind: "superseded", outcome: superseded };
-		return this.isActive() ? { kind: "unsettled" } : { kind: "settled" };
+		if (handle && run.isActive()) await settleOrAbort(handle, signal);
+		return run;
 	}
 
 	/**
@@ -526,8 +565,12 @@ export class Subagent {
 	 * one. A caller's `signal` is wired to abort() rather than forwarded to the
 	 * turn loop, so both levers stop the same run and both leave the record
 	 * reading `stopped`.
+	 *
+	 * The resume's run is born at once, queued; `schedule` decides when it starts.
+	 * The default starts it now. A concurrency limiter may hold it until a slot
+	 * frees, and a run stopped while it waits never starts.
 	 */
-	resume(prompt: string, signal?: AbortSignal): Promise<void> {
+	resume(prompt: string, options: ResumeRunOptions, schedule: RunScheduler = (thunk) => thunk()): Promise<void> {
 		const subagentSession = this.subagentSession;
 		if (!subagentSession) {
 			// Rejection, not a throw: this method is not async, and a synchronous
@@ -535,21 +578,45 @@ export class Subagent {
 			return Promise.reject(new Error("Subagent not configured for resume — missing session"));
 		}
 
-		this._promise = this.continueSession(subagentSession, prompt, signal);
+		const run = this.beginResume(options);
+		// Checked on the run, not the record: a run stopped while it waited leaves
+		// the record resumable, and a later resume may already have replaced it.
+		this._promise = schedule(() =>
+			run.isActive() ? this.startResumedRun(run, subagentSession, prompt, options.signal) : Promise.resolve(),
+		);
 		return this._promise;
 	}
 
 	/**
-	 * The resume's own prefix, then the shared run body. Always resolves.
+	 * A resume's birth: it replaces the current run with a new queued run of its
+	 * own, claimed when the caller asks, so a carrier's claim is in place before
+	 * the run can start.
+	 */
+	private beginResume(options: ResumeRunOptions): SubagentRun {
+		// The resume is a new run, so nothing the previous run held carries over:
+		// its handles are released, and it is marked replaced for any carrier that
+		// still holds it.
+		this.currentRun.release();
+		this.currentRun.markReplaced();
+		const run = new SubagentRun("resume", options.background);
+		if (options.claimOutcome) run.claim();
+		this.currentRun = run;
+		return run;
+	}
+
+	/**
+	 * A resume's start, then the shared run body. Always resolves.
 	 *
 	 * Synchronous up to the turn loop, so the record reads running, and the
-	 * started notification has fired, by the time resume() returns.
+	 * started notification has fired, by the time this returns its promise.
 	 */
-	private async continueSession(session: SubagentSession, prompt: string, signal?: AbortSignal): Promise<void> {
-		// After resetForResume, which releases the previous run's handles.
-		this.resetForResume(Date.now());
-		const run = new SubagentRun("resume", signal, () => this.abort());
-		this.currentRun = run;
+	private async startResumedRun(
+		run: SubagentRun,
+		session: SubagentSession,
+		prompt: string,
+		signal: AbortSignal | undefined,
+	): Promise<void> {
+		this.startRun(run, signal);
 		// Cancelled before it started: the turn loop takes no turn on a fired lever,
 		// so the resume ends like one aborted mid-run.
 		if (run.aborted) this.abort();
@@ -557,9 +624,15 @@ export class Subagent {
 		await this.runOnSession(run, session, prompt);
 	}
 
-	/** Transition to running state. Sets status and startedAt. */
-	markRunning(startedAt: number): void {
-		this.state.markRunning(startedAt);
+	/**
+	 * Start a run: it transitions to running and wires the caller's signal to
+	 * abort(). A run's start counts as progress, so a run that has not yet
+	 * emitted a session event reads as just started rather than stalled.
+	 */
+	private startRun(run: SubagentRun, callerSignal: AbortSignal | undefined): void {
+		const startedAt = Date.now();
+		run.start(startedAt, callerSignal, () => this.abort());
+		this.state.markProgress(startedAt);
 	}
 
 	/**
@@ -567,68 +640,44 @@ export class Subagent {
 	 * Always sets result and completedAt (??=). Only changes status if not stopped.
 	 */
 	markCompleted(result: string, completedAt?: number): void {
-		this.state.markCompleted(result, completedAt);
-	}
-
-	/**
-	 * Transition to aborted state.
-	 * Always sets result and completedAt (??=). Only changes status if not stopped.
-	 */
-	markAborted(result: string, completedAt?: number): void {
-		this.state.markAborted(result, completedAt);
-	}
-
-	/**
-	 * Transition to error state.
-	 * Always sets error (formatted) and completedAt (??=). Only changes status if not stopped.
-	 */
-	markError(error: unknown, completedAt?: number): void {
-		this.state.markError(error, completedAt);
+		this.currentRun.markCompleted(result, completedAt);
 	}
 
 	/** Transition to stopped state. Always valid — no guard. */
 	markStopped(completedAt?: number): void {
-		this.state.markStopped(completedAt);
+		this.currentRun.markStopped(completedAt);
 	}
 
-	/** Record the parent collected this agent's outcome. Idempotent. */
+	/** Record the parent collected the current run's outcome. Idempotent. */
 	markConsumed(at?: number): void {
-		this.state.markConsumed(at);
+		this.currentRun.markConsumed(at);
 	}
 
 	/** The announcement channel delivered this update; no outcome carrier repeats it. */
 	markUpdateAnnounced(message: string): void {
-		this.state.markUpdateAnnounced(message);
+		this.currentRun.markUpdateAnnounced(message);
 	}
 
 	/**
-	 * A carrier has committed to delivering this outcome; nothing else announces
-	 * it. The returned handle lets a carrier that abandons its commitment (a
-	 * waiter whose parent turn was interrupted) drop only its own.
+	 * A carrier has committed to delivering the current run's outcome; nothing
+	 * else announces it. The returned handle lets a carrier that abandons its
+	 * commitment (a waiter whose parent turn was interrupted) drop only its own.
 	 */
 	claim(): CarrierClaim {
-		return this.state.claim();
+		return this.currentRun.claim();
 	}
 
 	/**
-	 * No carrier holds this outcome; announcing is owed again. Called when a
-	 * resume nobody claims starts (SubagentManager.startResume), clearing the
-	 * claims previous carriers left after they delivered.
-	 */
-	releaseClaims(): void {
-		this.state.releaseClaims();
-	}
-
-	/**
-	 * Stop an agent that never started, then notify like every other terminal
-	 * transition. No listener release: nothing is wired before run().
-	 * The record leaves the active set here, so the thunk the limiter runs when
-	 * the slot finally frees no-ops on guardedRun()'s guard — one notification.
+	 * Stop a run still waiting for its slot, then notify like every other
+	 * terminal transition. No listener release: a run wires nothing until it
+	 * starts. The run leaves the active set here, so the thunk the limiter runs
+	 * when the slot finally frees no-ops on its guard — one notification.
 	 */
 	stopQueued(): void {
-		this.state.stopQueued();
-		// A queued record has never run, so the run it never started is its initial one.
-		this.execution.observer?.onRunFinished?.(this, "initial");
+		this.currentRun.stopQueued();
+		// The queued run is the agent's initial run or a resume waiting for its slot,
+		// and it ends on that run's own path.
+		this.execution.observer?.onRunFinished?.(this, this.currentRun.kind);
 	}
 
 	/**
@@ -641,8 +690,8 @@ export class Subagent {
 	 */
 	abort(): boolean {
 		if (!this.isRunning()) return false;
-		this.currentRun?.abort();
-		this.markStopped();
+		this.currentRun.abort();
+		this.currentRun.markStopped();
 		return true;
 	}
 
@@ -665,12 +714,6 @@ export class Subagent {
 		this._pendingSteers = [];
 	}
 
-	/** Reset for resume: running status, new startedAt, clear completedAt/result/error/consumedAt; release the previous run. */
-	resetForResume(startedAt: number): void {
-		this.state.resetForResume(startedAt);
-		this.currentRun?.release();
-	}
-
 	/** Complete a run: release its handles, dispose or hold the workspace, status transition, notify observer. */
 	private complete(run: SubagentRun, result: TurnLoopResult): void {
 		run.release();
@@ -685,14 +728,15 @@ export class Subagent {
 		// answer. Every other outcome ends the run for good and tears it down here.
 		// The question was recorded by ask_parent during the run, so it is already
 		// on the record here.
-		const holdForResume = finalStatus === "completed" && this.pendingQuestion !== undefined;
+		const holdForResume = finalStatus === "completed" && run.pendingQuestion !== undefined;
 		const finalResult = holdForResume
 			? result.responseText
 			: result.responseText +
 				this.workspaceBracket.dispose({ status: finalStatus, description: this.description });
 
-		if (exhausted) this.markAborted(finalResult);
-		else this.markCompleted(finalResult);
+		// The run this completion ends, which a resume may already have replaced.
+		if (exhausted) run.markAborted(finalResult);
+		else run.markCompleted(finalResult);
 
 		this.execution.observer?.onRunFinished?.(this, run.kind);
 	}
@@ -741,23 +785,16 @@ export class Subagent {
 
 	/** Fail a run: mark error, release its handles, best-effort workspace dispose, notify observer. */
 	private fail(run: SubagentRun, err: unknown): void {
-		this.markError(err);
-		this.clearPendingQuestion();
+		run.markError(err);
+		// Drop a question the child recorded before the run failed: every carrier
+		// renders a pending question as "answer by resuming me", which is not the
+		// right next action after a failure, and the failure text already tells the
+		// parent to look. An aborted run keeps its question: it reached a terminal
+		// transition with an outcome to report.
+		run.setPendingQuestion(undefined);
 		run.release();
-		this.disposeWorkspaceQuietly("error");
+		this.disposeWorkspaceQuietly(run, "error");
 		this.execution.observer?.onRunFinished?.(this, run.kind);
-	}
-
-	/**
-	 * Drop a question the child recorded before the run failed.
-	 *
-	 * Every carrier renders a pending question as "answer by resuming me", which
-	 * is not the right next action after a failure — and the failure text already
-	 * tells the parent to look. An aborted run keeps its question:
-	 * those reached a terminal transition with an outcome to report.
-	 */
-	private clearPendingQuestion(): void {
-		this.state.setPendingQuestion(undefined);
 	}
 
 	/**
@@ -772,7 +809,7 @@ export class Subagent {
 		if (this.isActive()) return;
 		// Announce what *this* disposal produced, not what the record holds: both
 		// release and teardown reach here, and the second finds nothing to dispose.
-		const notice = this.disposeWorkspaceQuietly(this.status);
+		const notice = this.disposeWorkspaceQuietly(this.currentRun, this.status);
 		if (notice) this.execution.observer?.onWorkspaceNotice?.(this, notice);
 	}
 
@@ -781,14 +818,15 @@ export class Subagent {
 	 * what it reported and handing that back.
 	 *
 	 * These are the paths with no result text left to fold the addendum into, so
-	 * it is kept on the record for the carriers to report instead. The value is
+	 * it is kept on `run`, the run whose end produced it, for the carriers to
+	 * report instead. The value is
 	 * returned as well as stored, so a caller can tell an addendum this call
 	 * produced from one an earlier disposal already recorded.
 	 */
-	private disposeWorkspaceQuietly(status: SubagentStatus): string {
+	private disposeWorkspaceQuietly(run: SubagentRun, status: SubagentStatus): string {
 		try {
 			const notice = this.workspaceBracket.dispose({ status, description: this.description });
-			if (notice) this.state.setWorkspaceNotice(notice);
+			if (notice) run.setWorkspaceNotice(notice);
 			return notice;
 		} catch (err) { debugLog(`workspace dispose (${status})`, err); return ""; }
 	}
